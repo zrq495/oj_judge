@@ -10,9 +10,10 @@ import sys
 import MySQLdb
 import config
 from Queue import Queue
-from threading import Thread
+from threading import Thread,Lock
 os.setuid(int(os.popen("id -u %s"%"nobody").read()))
 q = Queue(config.queue_size)   #初始化队列
+dblock = Lock()
 
 def worker():
     while True:
@@ -25,12 +26,14 @@ def worker():
         user_id = task['user_id']
         data_count = get_data_count(task['problem_id'])
         result=run(problem_id,solution_id,language,data_count,user_id)
+        dblock.acquire()
         update_result(result)
+        dblock.release()
         q.task_done()
 
 def start_work_thread():
     for i in range(config.count_thread): #依次启动工作线程
-        t = Thread(target=worker, name="thread%d"%i)
+        t = Thread(target=worker, name="judge%d"%i)
         t.deamon = True
         t.start()
 def start_get_task():
@@ -189,8 +192,10 @@ def put_task_into_queue():
             else:
                 judged.append(solution_id)
                 q.put(task)
+                dblock.acquire()
                 update_solution_status(solution_id)
-        time.sleep(0.1)
+                dblock.release()
+        time.sleep(0.5)
         cur.close()
         con.close()
 
@@ -217,10 +222,13 @@ def compile(solution_id,language):
     f.close()
     if p.returncode == 0:
         return True
+    dblock.acquire()
     update_compile_info(solution_id,err+out)
+    dblock.release()
     return False
 
 def judge_result(problem_id,solution_id,data_num):
+    logging.debug("Judging result")
     currect_result = "/data/%s/data%s.out"%(problem_id,data_num)
     user_result = "/work/%s/out%s.txt"%(solution_id,data_num)
     curr = file(currect_result).read().replace('\r','')
@@ -236,7 +244,9 @@ def judge_result(problem_id,solution_id,data_num):
 
 def run(problem_id,solution_id,language,data_count,user_id):
     '''获取程序执行时间和内存'''
+    dblock.acquire()
     time_limit,mem_limit=get_problem_limit(problem_id)
+    dblock.release()
     time_limit = time_limit/1000
     mem_limit = mem_limit * 1024
     program_info = {
@@ -279,7 +289,8 @@ def run(problem_id,solution_id,language,data_count,user_id):
         args = shlex.split(cmd)
         input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
         output_data = file('/work/%s/out%s.txt'%(solution_id,i+1),'w')
-        p = subprocess.Popen(args,cwd=work_dir,stdout=output_data,stdin=input_data)
+        run_err_data = file('/work/%s/run_err%s.txt'%(solution_id,i+1),'w')
+        p = subprocess.Popen(args,cwd=work_dir,env={"PATH":"/nonexistent"},stdout=output_data,stdin=input_data,stderr=run_err_data)
         start = time.time()
         pid = p.pid
         logging.debug(pid)
@@ -318,7 +329,7 @@ def run(problem_id,solution_id,language,data_count,user_id):
         logging.debug("max_vms = %s"%max_vms)
     #    logging.debug("take time = %s"%(end - start))
         result = judge_result(problem_id,solution_id,i+1)
-        if result == "Wrong Answer":
+        if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result
             break
         elif result == 'Presentation Error':
@@ -326,6 +337,9 @@ def run(problem_id,solution_id,language,data_count,user_id):
         elif result == 'Accepted':
             if program_info['result'] != 'Presentation Error':
                 program_info['result'] = result
+        else:
+            logging.error("judge did not get result")
+
 
     program_info['take_time'] = total_time*1000
     program_info['take_memory'] = max_rss/1024
@@ -335,9 +349,9 @@ def run(problem_id,solution_id,language,data_count,user_id):
 def main():
     logging.basicConfig(level=logging.DEBUG,
                         format = '%(asctime)s --- %(message)s',)
-#    start_get_task()
     start_work_thread()
-    put_task_into_queue()
+    start_get_task()
+#    put_task_into_queue()
 
 if __name__=='__main__':
     main()
