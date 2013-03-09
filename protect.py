@@ -2,10 +2,12 @@
 #coding=utf-8
 import psutil
 import subprocess
+import codecs
 import logging
 import shlex
 import time
 import os
+import re
 import sys
 import MySQLdb
 import config
@@ -14,13 +16,11 @@ from threading import Thread,Lock
 os.setuid(int(os.popen("id -u %s"%"nobody").read()))
 q = Queue(config.queue_size)   #初始化队列
 dblock = Lock()
-
 def worker():
     while True:
         if q.empty() is True:
             logging.info("idle")
         task = q.get()
-        q.task_done()
         solution_id = task['solution_id']
         problem_id = task['problem_id']
         language = task['pro_lang']
@@ -32,6 +32,7 @@ def worker():
         dblock.acquire()
         update_result(result)
         dblock.release()
+        q.task_done()
 
 def start_work_thread():
     for i in range(config.count_thread): #依次启动工作线程
@@ -154,7 +155,9 @@ def get_code(solution_id,problem_id,pro_lang):
         if feh is not None:
             code = feh[0]
         else:
+            code = ''
             logging.error("cannot get code of runid %s"%solution_id)
+            return False
     except TypeError,e:
         logging.error("163")
         logging.error(e)
@@ -175,11 +178,14 @@ def get_code(solution_id,problem_id,pro_lang):
         logging.error(e)
         return False
     try:
-        f = file(real_path,'w')
+        f = codecs.open(real_path,'w',encoding='utf-8',errors='ignore')
+        code = del_code_note(code)
         try:
-            f.write(code.decode("utf-8","ignore").encode("utf-8"))
+            f.write(code)
         except:
-            logging.error("unicode code chinese")
+            logging.error("not write code to file")
+            f.close()
+            return False
         f.close()
     except OSError,e:
         logging.error("189")
@@ -187,9 +193,14 @@ def get_code(solution_id,problem_id,pro_lang):
         return False
     return True
 
+def del_code_note(code):
+    code = re.sub("//.*",'',code)
+    code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
+    return code
+
 
 def put_task_into_queue():
-    judged = []
+#    judged = []
     while True:
         con = None
         try:
@@ -210,6 +221,8 @@ def put_task_into_queue():
             dblock.acquire()
             ret = get_code(solution_id,problem_id,pro_lang)
             dblock.release()
+            if ret == False:
+                update_solution_status(solution_id,11)
             task = {
                 "solution_id":solution_id,
                 "problem_id":problem_id,
@@ -217,14 +230,14 @@ def put_task_into_queue():
                 "user_id":user_id,
                 "pro_lang":pro_lang,
             }
-            if solution_id in judged:
-                continue
-            else:
-                judged.append(solution_id)
-                q.put(task)
-                dblock.acquire()
-                update_solution_status(solution_id)
-                dblock.release()
+#            if solution_id in judged:
+#                continue
+ #           else:
+#            judged.append(solution_id)
+            q.put(task)
+            dblock.acquire()
+            update_solution_status(solution_id)
+            dblock.release()
         time.sleep(0.2)
 
 
@@ -268,6 +281,18 @@ def judge_result(problem_id,solution_id,data_num):
     if curr in user:
         return "Output limit"
     return "Wrong Answer"
+
+def get_max_mem(pid):
+	glan = psutil.Process(pid)
+	max = 0
+	while True:
+		try:
+			rss,vms = glan.get_memory_info()
+			if rss > max:
+				max = rss
+		except:
+			print "max rss = %s"%max
+			return max
 
 
 def run(problem_id,solution_id,language,data_count,user_id):
@@ -318,7 +343,11 @@ def run(problem_id,solution_id,language,data_count,user_id):
         input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
         output_data = file('/work/%s/out%s.txt'%(solution_id,i+1),'w')
         run_err_data = file('/work/%s/run_err%s.txt'%(solution_id,i+1),'w')
+#        fcntl.flock(output_data,fcntl.LOCK_EX|fcntl.LOCK_NB)
         p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
+#        a = Thread(target=get_max_mem,args=([p.pid,]))
+#        a.daemon = True
+#        a.start()
         start = time.time()
         pid = p.pid
         logging.debug(pid)
@@ -327,35 +356,40 @@ def run(problem_id,solution_id,language,data_count,user_id):
             time_to_now = time.time()-start + total_time
             if psutil.pid_exists(pid) is False:
                 program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024
+                program_info['take_memory'] = max_rss/1024.0
                 program_info['result'] = result_code["Runtime Error"]
                 return program_info
+#            fcntl.flock(output_data,fcntl.LOCK_EX|fcntl.LOCK_NB)
             rss,vms = glan.get_memory_info()
+#            p.communicate(input_data.read())
+#            fcntl.flock(output_data,fcntl.LOCK_UN)
             if p.poll() == 0:
                 end = time.time()
                 break
 #            logging.debug((rss,vms))
             if max_rss < rss:
                 max_rss = rss
+                print 'max_rss=%s'%max_rss
             if max_vms < vms:
                 max_vms = vms
             if time_to_now > time_limit:
                 program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024
+                program_info['take_memory'] = max_rss/1024.0
                 program_info['result'] = result_code["Time Limit Exceeded"]
                 glan.terminate()
                 return program_info
             if max_rss > mem_limit:
                 program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024
+                program_info['take_memory'] = max_rss/1024.0
                 program_info['result'] =result_code["Memory Limit Exceeded"]
                 glan.terminate()
                 return program_info
 
         total_time += end - start
         logging.debug("max_rss = %s"%max_rss)
+#        print "max_rss=",max_rss
         logging.debug("max_vms = %s"%max_vms)
-    #    logging.debug("take time = %s"%(end - start))
+#        logging.debug("take time = %s"%(end - start))
         result = judge_result(problem_id,solution_id,i+1)
         if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result
@@ -369,9 +403,10 @@ def run(problem_id,solution_id,language,data_count,user_id):
             logging.error("judge did not get result")
 
     program_info['take_time'] = total_time*1000
-    program_info['take_memory'] = max_rss/1024
+    program_info['take_memory'] = max_rss/1024.0
     program_info['result'] = result_code[program_info['result']]
     return program_info
+
 
 def main():
     logging.basicConfig(level=logging.INFO,
