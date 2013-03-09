@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 #coding=utf-8
+import os
+import re
+import sys
 import psutil
 import subprocess
 import codecs
 import logging
 import shlex
 import time
-import os
-import re
-import sys
 import MySQLdb
 import config
+import lorun
 from Queue import Queue
 from threading import Thread,Lock
 os.setuid(int(os.popen("id -u %s"%"nobody").read()))
@@ -294,6 +295,24 @@ def get_max_mem(pid):
 			print "max rss = %s"%max
 			return max
 
+def judge_one_c(solution_id,problem_id,data_num,time_limit,mem_limit):
+    input_data = file("/data/%s/data%s.in"%(problem_id,data_num))
+    temp_out_data = file("/work/%s/out%s.txt"%(solution_id,data_num),'w')
+    main_exe = '/work/%s/main'%(solution_id)
+    runcfg = {
+        'args':[main_exe],
+        'fd_in':input_data.fileno(),
+        'fd_out':temp_out_data.fileno(),
+        'timelimit':time_limit, #in MS
+        'memorylimit':mem_limit, #in KB
+    }
+    rst = lorun.run(runcfg)
+    input_data.close()
+    temp_out_data.close()
+    logging.info(rst)
+    return rst
+
+#def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit):
 
 def run(problem_id,solution_id,language,data_count,user_id):
     '''获取程序执行时间和内存'''
@@ -332,8 +351,6 @@ def run(problem_id,solution_id,language,data_count,user_id):
         return program_info
     if language == 'java':
         cmd = "/usr/bin/java Main"
-    else:
-        cmd = "./main"
     work_dir = '/work/%s'%solution_id
     max_rss = 0
     max_vms = 0
@@ -411,6 +428,8 @@ def run(problem_id,solution_id,language,data_count,user_id):
 def main():
     logging.basicConfig(level=logging.INFO,
                         format = '%(asctime)s --- %(message)s',)
+    judge_one_c(321814,1498,1,1000,65536*1000)
+    raise
     start_work_thread()
 #    start_get_task()
     put_task_into_queue()
