@@ -2,10 +2,12 @@
 #coding=utf-8
 import psutil
 import subprocess
+import codecs
 import logging
 import shlex
 import time
 import os
+import re
 import sys
 import MySQLdb
 import config
@@ -14,7 +16,6 @@ from threading import Thread,Lock
 os.setuid(int(os.popen("id -u %s"%"nobody").read()))
 q = Queue(config.queue_size)   #初始化队列
 dblock = Lock()
-
 def worker():
     while True:
         if q.empty() is True:
@@ -25,7 +26,9 @@ def worker():
         language = task['pro_lang']
         user_id = task['user_id']
         data_count = get_data_count(task['problem_id'])
+        logging.info("judging %s"%solution_id)
         result=run(problem_id,solution_id,language,data_count,user_id)
+        logging.info("%s result %s"%(result['solution_id'],result['result']))
         dblock.acquire()
         update_result(result)
         dblock.release()
@@ -47,7 +50,7 @@ def update_compile_info(solution_id,info):
         con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
                               config.db_name,charset=config.db_charset)
     except:
-        logging.error('cannot connect to database')
+        logging.error('runid %s in update_compile_info cannot connect to database'%solution_id)
         sys.exit(-1)
     cur = con.cursor()
     info = MySQLdb.escape_string(info)
@@ -63,7 +66,7 @@ def get_problem_limit(problem_id):
         con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
                               config.db_name,charset=config.db_charset)
     except:
-        logging.error('cannot connect to database')
+        logging.error('in get_problem_limit cannot connect to database')
         sys.exit(-1)
     cur = con.cursor()
     sql = "select time_limit,memory_limit from problem where problem_id = %s"%problem_id
@@ -73,17 +76,17 @@ def get_problem_limit(problem_id):
     con.close()
     return data
 
-def update_solution_status(solution_id):
+def update_solution_status(solution_id,result=12):
     logging.debug("update solution status")
     con = None
     try:
         con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
                               config.db_name,charset=config.db_charset)
     except:
-        logging.error('cannot connect to database')
+        logging.error('in update_solution_status cannot connect to database')
         sys.exit(-1)
     cur = con.cursor()
-    update_sql = "update solution set result = 12 where solution_id = %s"%solution_id
+    update_sql = "update solution set result = %s where solution_id = %s"%(solution_id,result)
     cur.execute(update_sql)
     con.commit()
     cur.close()
@@ -97,7 +100,7 @@ def update_result(result):
         con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
                               config.db_name,charset=config.db_charset)
     except:
-        logging.error('cannot connect to database')
+        logging.error('in update_result cannot connect to database')
         sys.exit(-1)
     cur = con.cursor()
     sql = "update solution set take_time = %s , take_memory = %s, result = %s where solution_id = %s"%(result['take_time'],result['take_memory'],result['result'],result['solution_id'])
@@ -105,7 +108,7 @@ def update_result(result):
     update_ac_sql = "update user set accept = (select count(distinct problem_id) from solution where result = 1 and user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
     update_sub_sql = "update user set submit = (select count(problem_id) from solution where user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
     update_problem_ac="UPDATE problem SET accept=(SELECT count(*) FROM solution WHERE problem_id=%s AND result=1) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
-    update_problem_sub="UPDATE problem SET accept=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
+    update_problem_sub="UPDATE problem SET submit=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
     cur.execute(update_ac_sql)
     cur.execute(update_sub_sql)
     cur.execute(update_problem_ac)
@@ -121,6 +124,7 @@ def get_data_count(problem_id):
     try:
         files = os.listdir(full_path)
     except OSError,e:
+        logging.error("124")
         logging.error(e)
         return 0
     count = 0
@@ -129,57 +133,96 @@ def get_data_count(problem_id):
             count += 1
     return count
 
-
-def put_task_into_queue():
+def get_code(solution_id,problem_id,pro_lang):
     file_name = {
         "gcc":"main.c",
         "g++":"main.cpp",
         "java":"Main.java",
         "pascal":"main.pas",
     }
-    
+    con = None
+    try:
+        con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
+                              config.db_name,charset=config.db_charset)
+    except:
+        logging.error('in put_task_into_queue cannot connect to database')
+        sys.exit(-1)
+    cur = con.cursor()
+    select_code_sql = "select code_content from code where solution_id = %s"%solution_id
+    cur.execute(select_code_sql)
+    try:
+        feh = cur.fetchone()
+        if feh is not None:
+            code = feh[0]
+        else:
+            code = ''
+            logging.error("cannot get code of runid %s"%solution_id)
+            return False
+    except TypeError,e:
+        logging.error("163")
+        logging.error(e)
+        return False
+    try:
+        os.mkdir('/work/%s/'%solution_id)
+    except OSError,e:
+        if str(e).find("exist")>0:
+            pass
+        else:
+            logging.error("172")
+            logging.error(e)
+            return False
+    try:
+        real_path = "/work/%s/%s"%(solution_id,file_name[pro_lang])
+    except KeyError,e:
+        logging.error("177")
+        logging.error(e)
+        return False
+    try:
+        f = codecs.open(real_path,'w',encoding='utf-8',errors='ignore')
+        code = del_code_note(code)
+        try:
+            f.write(code)
+        except:
+            logging.error("not write code to file")
+            f.close()
+            return False
+        f.close()
+    except OSError,e:
+        logging.error("189")
+        logging.error(e)
+        return False
+    return True
+
+def del_code_note(code):
+    code = re.sub("//.*",'',code)
+    code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
+    return code
+
+
+def put_task_into_queue():
+#    judged = []
     while True:
         con = None
         try:
             con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
                                   config.db_name,charset=config.db_charset)
         except:
-            logging.error('cannot connect to database')
+            logging.error('in put_task_into_queue cannot connect to database')
             sys.exit(-1)
         cur = con.cursor()
         sql = "select solution_id,problem_id,user_id,contest_id,pro_lang from solution where result = 0"
-        judged = []
 #        logging.debug('getting solution')
         cur.execute(sql)
         data = cur.fetchall()
+        cur.close()
+        con.close()
         for i in data:
             solution_id,problem_id,user_id,contest_id,pro_lang = i
-            select_code_sql = "select code_content from code where solution_id = %s"%solution_id
-            cur.execute(select_code_sql)
-            try:
-                code = cur.fetchone()[0]
-            except TypeError,e:
-                logging.error(e)
-                continue
-            try:
-                os.mkdir('/work/%s/'%solution_id)
-            except OSError,e:
-                if str(e).find("exist")>0:
-                    pass
-                else:
-                    logging.error(e)
-            try:
-                real_path = "/work/%s/%s"%(solution_id,file_name[pro_lang])
-            except KeyError,e:
-                logging.error(e)
-                continue
-            try:
-                f = file(real_path,'w')
-                f.write(code)
-                f.close()
-            except OSError,e:
-                logging.error(e)
-                continue
+            dblock.acquire()
+            ret = get_code(solution_id,problem_id,pro_lang)
+            dblock.release()
+            if ret == False:
+                update_solution_status(solution_id,11)
             task = {
                 "solution_id":solution_id,
                 "problem_id":problem_id,
@@ -187,17 +230,15 @@ def put_task_into_queue():
                 "user_id":user_id,
                 "pro_lang":pro_lang,
             }
-            if solution_id in judged:
-                continue
-            else:
-                judged.append(solution_id)
-                q.put(task)
-                dblock.acquire()
-                update_solution_status(solution_id)
-                dblock.release()
-        time.sleep(0.5)
-        cur.close()
-        con.close()
+#            if solution_id in judged:
+#                continue
+ #           else:
+#            judged.append(solution_id)
+            q.put(task)
+            dblock.acquire()
+            update_solution_status(solution_id)
+            dblock.release()
+        time.sleep(0.2)
 
 
 def compile(solution_id,language):
@@ -241,13 +282,25 @@ def judge_result(problem_id,solution_id,data_num):
         return "Output limit"
     return "Wrong Answer"
 
+def get_max_mem(pid):
+	glan = psutil.Process(pid)
+	max = 0
+	while True:
+		try:
+			rss,vms = glan.get_memory_info()
+			if rss > max:
+				max = rss
+		except:
+			print "max rss = %s"%max
+			return max
+
 
 def run(problem_id,solution_id,language,data_count,user_id):
     '''获取程序执行时间和内存'''
     dblock.acquire()
     time_limit,mem_limit=get_problem_limit(problem_id)
     dblock.release()
-    time_limit = time_limit/1000
+    time_limit = (time_limit+10)/1000.0
     mem_limit = mem_limit * 1024
     program_info = {
         "solution_id":solution_id,
@@ -278,7 +331,7 @@ def run(problem_id,solution_id,language,data_count,user_id):
         program_info['result'] = result_code["System Error"]
         return program_info
     if language == 'java':
-        cmd = "java Main"
+        cmd = "/usr/bin/java Main"
     else:
         cmd = "./main"
     work_dir = '/work/%s'%solution_id
@@ -290,7 +343,11 @@ def run(problem_id,solution_id,language,data_count,user_id):
         input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
         output_data = file('/work/%s/out%s.txt'%(solution_id,i+1),'w')
         run_err_data = file('/work/%s/run_err%s.txt'%(solution_id,i+1),'w')
-        p = subprocess.Popen(args,cwd=work_dir,env={"PATH":"/nonexistent"},stdout=output_data,stdin=input_data,stderr=run_err_data)
+#        fcntl.flock(output_data,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
+#        a = Thread(target=get_max_mem,args=([p.pid,]))
+#        a.daemon = True
+#        a.start()
         start = time.time()
         pid = p.pid
         logging.debug(pid)
@@ -299,35 +356,40 @@ def run(problem_id,solution_id,language,data_count,user_id):
             time_to_now = time.time()-start + total_time
             if psutil.pid_exists(pid) is False:
                 program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024
+                program_info['take_memory'] = max_rss/1024.0
                 program_info['result'] = result_code["Runtime Error"]
                 return program_info
+#            fcntl.flock(output_data,fcntl.LOCK_EX|fcntl.LOCK_NB)
             rss,vms = glan.get_memory_info()
+#            p.communicate(input_data.read())
+#            fcntl.flock(output_data,fcntl.LOCK_UN)
             if p.poll() == 0:
                 end = time.time()
                 break
 #            logging.debug((rss,vms))
             if max_rss < rss:
                 max_rss = rss
+                print 'max_rss=%s'%max_rss
             if max_vms < vms:
                 max_vms = vms
             if time_to_now > time_limit:
                 program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024
+                program_info['take_memory'] = max_rss/1024.0
                 program_info['result'] = result_code["Time Limit Exceeded"]
                 glan.terminate()
                 return program_info
             if max_rss > mem_limit:
                 program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024
+                program_info['take_memory'] = max_rss/1024.0
                 program_info['result'] =result_code["Memory Limit Exceeded"]
                 glan.terminate()
                 return program_info
 
         total_time += end - start
         logging.debug("max_rss = %s"%max_rss)
+#        print "max_rss=",max_rss
         logging.debug("max_vms = %s"%max_vms)
-    #    logging.debug("take time = %s"%(end - start))
+#        logging.debug("take time = %s"%(end - start))
         result = judge_result(problem_id,solution_id,i+1)
         if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result
@@ -340,18 +402,18 @@ def run(problem_id,solution_id,language,data_count,user_id):
         else:
             logging.error("judge did not get result")
 
-
     program_info['take_time'] = total_time*1000
-    program_info['take_memory'] = max_rss/1024
+    program_info['take_memory'] = max_rss/1024.0
     program_info['result'] = result_code[program_info['result']]
     return program_info
 
+
 def main():
-    logging.basicConfig(level=logging.DEBUG,
+    logging.basicConfig(level=logging.INFO,
                         format = '%(asctime)s --- %(message)s',)
     start_work_thread()
-    start_get_task()
-#    put_task_into_queue()
+#    start_get_task()
+    put_task_into_queue()
 
 if __name__=='__main__':
     main()
