@@ -13,14 +13,14 @@ import MySQLdb
 import config
 import lorun
 from Queue import Queue
-from threading import Thread,Lock
+import threading
 os.setuid(int(os.popen("id -u %s"%"nobody").read()))
 q = Queue(config.queue_size)   #初始化队列
-dblock = Lock()
+dblock = threading.Lock()
 def worker():
     while True:
         if q.empty() is True:
-            logging.info("idle")
+            logging.info("%s idle"%(threading.current_thread().name))
         task = q.get()
         solution_id = task['solution_id']
         problem_id = task['problem_id']
@@ -36,85 +36,86 @@ def worker():
         q.task_done()
 
 def start_work_thread():
-    for i in range(config.count_thread): #依次启动工作线程
-        t = Thread(target=worker, name="judge%d"%i)
+    for i in range(config.count_thread):
+        t = threading.Thread(target=worker)
         t.deamon = True
         t.start()
 
 def start_get_task():
-    t = Thread(target=put_task_into_queue, name="get_task")
+    t = threading.Thread(target=put_task_into_queue, name="get_task")
     t.deamon = True
     t.start()
 
 def update_compile_info(solution_id,info):
-    con = None
-    try:
-        con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
-                              config.db_name,charset=config.db_charset)
-    except:
-        logging.error('runid %s in update_compile_info cannot connect to database'%solution_id)
-        sys.exit(-1)
+    con=connect_to_db()
     cur = con.cursor()
     info = MySQLdb.escape_string(info)
     sql = "insert into compile_info(solution_id,compile_info) values (%s,'%s')"%(solution_id,info)
-    cur.execute(sql)
+    try:
+        cur.execute(sql)
+    except MySQLdb.OperationalError,e:
+        logging.error(e)
+        return False
     con.commit()
     cur.close()
     con.close()
 
 def get_problem_limit(problem_id):
-    con = None
-    try:
-        con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
-                              config.db_name,charset=config.db_charset)
-    except:
-        logging.error('in get_problem_limit cannot connect to database')
-        sys.exit(-1)
+    con=connect_to_db()
     cur = con.cursor()
     sql = "select time_limit,memory_limit from problem where problem_id = %s"%problem_id
-    cur.execute(sql)
+    try:
+        cur.execute(sql)
+    except MySQLdb.OperationalError,e:
+        logging.error(e)
+        return False
     data = cur.fetchone()
     cur.close()
     con.close()
     return data
 
 def update_solution_status(solution_id,result=12):
-    logging.debug("update solution status")
-    con = None
-    try:
-        con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
-                              config.db_name,charset=config.db_charset)
-    except:
-        logging.error('in update_solution_status cannot connect to database')
-        sys.exit(-1)
+    con=connect_to_db()
     cur = con.cursor()
-    update_sql = "update solution set result = %s where solution_id = %s"%(solution_id,result)
-    cur.execute(update_sql)
+    update_sql = "update solution set result = %s where solution_id = %s"%(result,solution_id)
+    try:
+        cur.execute(update_sql)
+    except MySQLdb.OperationalError,e:
+        logging.error(e)
+        return False
     con.commit()
     cur.close()
     con.close()
     return 0
 
+def connect_to_db():
+    con = None
+    while True:
+        try:
+            con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
+                                  config.db_name,charset=config.db_charset)
+            return con
+        except:
+            logging.error('Cannot connect to database,trying again')
+            time.sleep(1)
 
 def update_result(result):
-    con = None
-    try:
-        con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
-                              config.db_name,charset=config.db_charset)
-    except:
-        logging.error('in update_result cannot connect to database')
-        sys.exit(-1)
+    con=connect_to_db()
     cur = con.cursor()
     sql = "update solution set take_time = %s , take_memory = %s, result = %s where solution_id = %s"%(result['take_time'],result['take_memory'],result['result'],result['solution_id'])
-    cur.execute(sql)
     update_ac_sql = "update user set accept = (select count(distinct problem_id) from solution where result = 1 and user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
     update_sub_sql = "update user set submit = (select count(problem_id) from solution where user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
     update_problem_ac="UPDATE problem SET accept=(SELECT count(*) FROM solution WHERE problem_id=%s AND result=1) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
     update_problem_sub="UPDATE problem SET submit=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
-    cur.execute(update_ac_sql)
-    cur.execute(update_sub_sql)
-    cur.execute(update_problem_ac)
-    cur.execute(update_problem_sub)
+    try:
+        cur.execute(sql)
+        cur.execute(update_ac_sql)
+        cur.execute(update_sub_sql)
+        cur.execute(update_problem_ac)
+        cur.execute(update_problem_sub)
+    except MySQLdb.OperationalError,e:
+        logging.error(e)
+        return False
     con.commit()
     cur.close()
     con.close()
@@ -142,16 +143,14 @@ def get_code(solution_id,problem_id,pro_lang):
         "java":"Main.java",
         "pascal":"main.pas",
     }
-    con = None
-    try:
-        con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
-                              config.db_name,charset=config.db_charset)
-    except:
-        logging.error('in put_task_into_queue cannot connect to database')
-        sys.exit(-1)
+    con=connect_to_db()
     cur = con.cursor()
     select_code_sql = "select code_content from code where solution_id = %s"%solution_id
-    cur.execute(select_code_sql)
+    try:
+        cur.execute(select_code_sql)
+    except MySQLdb.OperationalError,e:
+        logging.error(e)
+        return False
     try:
         feh = cur.fetchone()
         if feh is not None:
@@ -180,7 +179,7 @@ def get_code(solution_id,problem_id,pro_lang):
         logging.error(e)
         return False
     try:
-        f = codecs.open(real_path,'w',encoding='utf-8',errors='ignore')
+        f = codecs.open(real_path,'w')
         code = del_code_note(code)
         try:
             f.write(code)
@@ -200,20 +199,17 @@ def del_code_note(code):
     code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
     return code
 
-
 def put_task_into_queue():
     while True:
         q.join()
-        con = None
-        try:
-            con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
-                                  config.db_name,charset=config.db_charset)
-        except:
-            logging.error('in put_task_into_queue cannot connect to database')
-            sys.exit(-1)
+        con=connect_to_db()
         cur = con.cursor()
         sql = "select solution_id,problem_id,user_id,contest_id,pro_lang from solution where result = 0"
-        cur.execute(sql)
+        try:
+            cur.execute(sql)
+        except MySQLdb.OperationalError,e:
+            logging.error(e)
+            return False
         data = cur.fetchall()
         cur.close()
         con.close()
@@ -223,7 +219,10 @@ def put_task_into_queue():
             ret = get_code(solution_id,problem_id,pro_lang)
             dblock.release()
             if ret == False:
+                dblock.acquire()
                 update_solution_status(solution_id,11)
+                dblock.release()
+                continue
             task = {
                 "solution_id":solution_id,
                 "problem_id":problem_id,
@@ -236,7 +235,6 @@ def put_task_into_queue():
             update_solution_status(solution_id)
             dblock.release()
         time.sleep(0.2)
-
 
 def compile(solution_id,language):
     '''将程序编译成可执行文件'''
@@ -297,8 +295,8 @@ def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
     return rst
 
 def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
-    total_time = 0
     max_mem = 0
+    max_time = 0
     for i in range(data_count):
         ret = judge_one_c_mem_time(solution_id,problem_id,i+1,time_limit+10,mem_limit)
         logging.debug(ret)
@@ -313,14 +311,10 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
         elif ret['result'] == 5:
             program_info['result'] =result_code["Runtime Error"]
             return program_info
-        else :
-            total_time += ret['timeused']
-            if total_time > time_limit:
-                program_info['result'] = result_code["Time Limit Exceeded"]
-                program_info['take_time'] = time_limit + 10
-                return program_info
-            if max_mem < ret['memoryused']:
-                max_mem = ret['memoryused']
+        if max_time < ret["timeused"]:
+            max_time = ret['timeused']
+        if max_mem < ret['memoryused']:
+            max_mem = ret['memoryused']
         result = judge_result(problem_id,solution_id,i+1)
         if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result_code[result]
@@ -332,7 +326,7 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
                 program_info['result'] = result_code[result]
         else:
             logging.error("judge did not get result")
-    program_info['take_time'] = total_time
+    program_info['take_time'] = max_time
     program_info['take_memory'] = max_mem
     return program_info
 
@@ -341,7 +335,7 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
     work_dir = '/work/%s'%solution_id
     max_rss = 0
     max_vms = 0
-    total_time = 0
+    max_time = 0
     for i in range(data_count):
         args = shlex.split(cmd)
         input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
@@ -353,7 +347,7 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
         logging.debug(pid)
         glan = psutil.Process(pid)
         while True:
-            time_to_now = time.time()-start + total_time
+            time_to_now = time.time()-start 
             if psutil.pid_exists(pid) is False:
                 program_info['take_time'] = time_to_now*1000
                 program_info['take_memory'] = max_rss/1024.0
@@ -363,7 +357,6 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
             if p.poll() == 0:
                 end = time.time()
                 break
-#            logging.debug((rss,vms))
             if max_rss < rss:
                 max_rss = rss
             if max_vms < vms:
@@ -380,10 +373,11 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
                 program_info['result'] =result_code["Memory Limit Exceeded"]
                 glan.terminate()
                 return program_info
-        total_time += end - start
+        use_time = end - start
+        if max_time < use_time:
+            max_time = use_time
         logging.debug("max_rss = %s"%max_rss)
         logging.debug("max_vms = %s"%max_vms)
-        logging.debug("take time = %s"%(end - start))
         result = judge_result(problem_id,solution_id,i+1)
         if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result
@@ -395,7 +389,7 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
                 program_info['result'] = result
         else:
             logging.error("judge did not get result")
-    program_info['take_time'] = total_time*1000
+    program_info['take_time'] = max_time*1000
     program_info['take_memory'] = max_rss/1024.0
     program_info['result'] = result_code[program_info['result']]
     return program_info
@@ -444,12 +438,31 @@ def run(problem_id,solution_id,language,data_count,user_id):
     logging.debug(result)
     return result
 
+def check_thread():
+    while True:
+        try:
+            if threading.active_count() < config.count_thread + 2:
+                logging.info("start new thread")
+                t = threading.Thread(target=worker)
+                t.deamon = True
+                t.start()
+            time.sleep(1)
+        except:
+            pass
+
+def start_protect():
+    t = threading.Thread(target=check_thread, name="check_thread")
+    t.deamon = True
+    t.start()
+
 
 def main():
     logging.basicConfig(level=logging.INFO,
                         format = '%(asctime)s --- %(message)s',)
+    start_get_task()
     start_work_thread()
-    put_task_into_queue()
+#    put_task_into_queue()
+    start_protect()
 
 if __name__=='__main__':
     main()
