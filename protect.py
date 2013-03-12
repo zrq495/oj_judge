@@ -40,6 +40,7 @@ def start_work_thread():
         t = Thread(target=worker, name="judge%d"%i)
         t.deamon = True
         t.start()
+
 def start_get_task():
     t = Thread(target=put_task_into_queue, name="get_task")
     t.deamon = True
@@ -201,8 +202,8 @@ def del_code_note(code):
 
 
 def put_task_into_queue():
-#    judged = []
     while True:
+        q.join()
         con = None
         try:
             con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
@@ -212,7 +213,6 @@ def put_task_into_queue():
             sys.exit(-1)
         cur = con.cursor()
         sql = "select solution_id,problem_id,user_id,contest_id,pro_lang from solution where result = 0"
-#        logging.debug('getting solution')
         cur.execute(sql)
         data = cur.fetchall()
         cur.close()
@@ -231,10 +231,6 @@ def put_task_into_queue():
                 "user_id":user_id,
                 "pro_lang":pro_lang,
             }
-#            if solution_id in judged:
-#                continue
- #           else:
-#            judged.append(solution_id)
             q.put(task)
             dblock.acquire()
             update_solution_status(solution_id)
@@ -273,8 +269,8 @@ def judge_result(problem_id,solution_id,data_num):
     logging.debug("Judging result")
     currect_result = "/data/%s/data%s.out"%(problem_id,data_num)
     user_result = "/work/%s/out%s.txt"%(solution_id,data_num)
-    curr = file(currect_result).read().replace('\r','')
-    user = file(user_result).read().replace('\r','')
+    curr = file(currect_result).read().replace('\r','').rstrip()
+    user = file(user_result).read().replace('\r','').rstrip()
     if curr == user:
         return "Accepted"
     if curr.split() == user.split():
@@ -283,19 +279,7 @@ def judge_result(problem_id,solution_id,data_num):
         return "Output limit"
     return "Wrong Answer"
 
-def get_max_mem(pid):
-	glan = psutil.Process(pid)
-	max = 0
-	while True:
-		try:
-			rss,vms = glan.get_memory_info()
-			if rss > max:
-				max = rss
-		except:
-			print "max rss = %s"%max
-			return max
-
-def judge_one_c(solution_id,problem_id,data_num,time_limit,mem_limit):
+def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
     input_data = file("/data/%s/data%s.in"%(problem_id,data_num))
     temp_out_data = file("/work/%s/out%s.txt"%(solution_id,data_num),'w')
     main_exe = '/work/%s/main'%(solution_id)
@@ -309,25 +293,126 @@ def judge_one_c(solution_id,problem_id,data_num,time_limit,mem_limit):
     rst = lorun.run(runcfg)
     input_data.close()
     temp_out_data.close()
-    logging.info(rst)
+    logging.debug(rst)
     return rst
 
-#def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit):
+def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
+    total_time = 0
+    max_mem = 0
+    for i in range(data_count):
+        ret = judge_one_c_mem_time(solution_id,problem_id,i+1,time_limit+10,mem_limit)
+        logging.debug(ret)
+        if ret['result'] == 2:
+            program_info['result'] = result_code["Time Limit Exceeded"]
+            program_info['take_time'] = time_limit+10
+            return program_info
+        elif ret['result'] == 3:
+            program_info['result'] =result_code["Memory Limit Exceeded"]
+            program_info['take_memory'] = mem_limit
+            return program_info
+        elif ret['result'] == 5:
+            program_info['result'] =result_code["Runtime Error"]
+            return program_info
+        else :
+            total_time += ret['timeused']
+            if total_time > time_limit:
+                program_info['result'] = result_code["Time Limit Exceeded"]
+                program_info['take_time'] = time_limit + 10
+                return program_info
+            if max_mem < ret['memoryused']:
+                max_mem = ret['memoryused']
+        result = judge_result(problem_id,solution_id,i+1)
+        if result == "Wrong Answer" or result == "Output limit":
+            program_info['result'] = result_code[result]
+            break
+        elif result == 'Presentation Error':
+            program_info['result'] = result_code[result]
+        elif result == 'Accepted':
+            if program_info['result'] != 'Presentation Error':
+                program_info['result'] = result_code[result]
+        else:
+            logging.error("judge did not get result")
+    program_info['take_time'] = total_time
+    program_info['take_memory'] = max_mem
+    return program_info
+
+def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
+    cmd = "/usr/bin/java Main"
+    work_dir = '/work/%s'%solution_id
+    max_rss = 0
+    max_vms = 0
+    total_time = 0
+    for i in range(data_count):
+        args = shlex.split(cmd)
+        input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
+        output_data = file('/work/%s/out%s.txt'%(solution_id,i+1),'w')
+        run_err_data = file('/work/%s/run_err%s.txt'%(solution_id,i+1),'w')
+        p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
+        start = time.time()
+        pid = p.pid
+        logging.debug(pid)
+        glan = psutil.Process(pid)
+        while True:
+            time_to_now = time.time()-start + total_time
+            if psutil.pid_exists(pid) is False:
+                program_info['take_time'] = time_to_now*1000
+                program_info['take_memory'] = max_rss/1024.0
+                program_info['result'] = result_code["Runtime Error"]
+                return program_info
+            rss,vms = glan.get_memory_info()
+            if p.poll() == 0:
+                end = time.time()
+                break
+#            logging.debug((rss,vms))
+            if max_rss < rss:
+                max_rss = rss
+            if max_vms < vms:
+                max_vms = vms
+            if time_to_now > time_limit:
+                program_info['take_time'] = time_to_now*1000
+                program_info['take_memory'] = max_rss/1024.0
+                program_info['result'] = result_code["Time Limit Exceeded"]
+                glan.terminate()
+                return program_info
+            if max_rss > mem_limit:
+                program_info['take_time'] = time_to_now*1000
+                program_info['take_memory'] = max_rss/1024.0
+                program_info['result'] =result_code["Memory Limit Exceeded"]
+                glan.terminate()
+                return program_info
+        total_time += end - start
+        logging.debug("max_rss = %s"%max_rss)
+        logging.debug("max_vms = %s"%max_vms)
+        logging.debug("take time = %s"%(end - start))
+        result = judge_result(problem_id,solution_id,i+1)
+        if result == "Wrong Answer" or result == "Output limit":
+            program_info['result'] = result
+            break
+        elif result == 'Presentation Error':
+            program_info['result']=result
+        elif result == 'Accepted':
+            if program_info['result'] != 'Presentation Error':
+                program_info['result'] = result
+        else:
+            logging.error("judge did not get result")
+    program_info['take_time'] = total_time*1000
+    program_info['take_memory'] = max_rss/1024.0
+    program_info['result'] = result_code[program_info['result']]
+    return program_info
+
 
 def run(problem_id,solution_id,language,data_count,user_id):
     '''获取程序执行时间和内存'''
     dblock.acquire()
     time_limit,mem_limit=get_problem_limit(problem_id)
     dblock.release()
-    time_limit = (time_limit+10)/1000.0
-    mem_limit = mem_limit * 1024
     program_info = {
         "solution_id":solution_id,
         "problem_id":problem_id,
         "take_time":0,
         "take_memory":0,
         "user_id":user_id,
-        "result":None,
+        "result":0,
     }
     result_code = {
         "Waiting":0,
@@ -349,89 +434,21 @@ def run(problem_id,solution_id,language,data_count,user_id):
     if data_count == 0:#没有测试数据
         program_info['result'] = result_code["System Error"]
         return program_info
-    if language == 'java':
-        cmd = "/usr/bin/java Main"
-    work_dir = '/work/%s'%solution_id
-    max_rss = 0
-    max_vms = 0
-    total_time = 0
-    for i in range(data_count):
-        args = shlex.split(cmd)
-        input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
-        output_data = file('/work/%s/out%s.txt'%(solution_id,i+1),'w')
-        run_err_data = file('/work/%s/run_err%s.txt'%(solution_id,i+1),'w')
-#        fcntl.flock(output_data,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
-#        a = Thread(target=get_max_mem,args=([p.pid,]))
-#        a.daemon = True
-#        a.start()
-        start = time.time()
-        pid = p.pid
-        logging.debug(pid)
-        glan = psutil.Process(pid)
-        while True:
-            time_to_now = time.time()-start + total_time
-            if psutil.pid_exists(pid) is False:
-                program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024.0
-                program_info['result'] = result_code["Runtime Error"]
-                return program_info
-#            fcntl.flock(output_data,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            rss,vms = glan.get_memory_info()
-#            p.communicate(input_data.read())
-#            fcntl.flock(output_data,fcntl.LOCK_UN)
-            if p.poll() == 0:
-                end = time.time()
-                break
-#            logging.debug((rss,vms))
-            if max_rss < rss:
-                max_rss = rss
-                print 'max_rss=%s'%max_rss
-            if max_vms < vms:
-                max_vms = vms
-            if time_to_now > time_limit:
-                program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024.0
-                program_info['result'] = result_code["Time Limit Exceeded"]
-                glan.terminate()
-                return program_info
-            if max_rss > mem_limit:
-                program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024.0
-                program_info['result'] =result_code["Memory Limit Exceeded"]
-                glan.terminate()
-                return program_info
-
-        total_time += end - start
-        logging.debug("max_rss = %s"%max_rss)
-#        print "max_rss=",max_rss
-        logging.debug("max_vms = %s"%max_vms)
-#        logging.debug("take time = %s"%(end - start))
-        result = judge_result(problem_id,solution_id,i+1)
-        if result == "Wrong Answer" or result == "Output limit":
-            program_info['result'] = result
-            break
-        elif result == 'Presentation Error':
-            program_info['result']=result
-        elif result == 'Accepted':
-            if program_info['result'] != 'Presentation Error':
-                program_info['result'] = result
-        else:
-            logging.error("judge did not get result")
-
-    program_info['take_time'] = total_time*1000
-    program_info['take_memory'] = max_rss/1024.0
-    program_info['result'] = result_code[program_info['result']]
-    return program_info
+    if language == "java":
+        time_limit = (time_limit+10)/1000.0
+        mem_limit = mem_limit * 1024
+        result = judge_java(solution_id,problem_id,data_count,
+                            time_limit,mem_limit,program_info,result_code)
+    else:
+        result = judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code)
+    logging.debug(result)
+    return result
 
 
 def main():
     logging.basicConfig(level=logging.INFO,
                         format = '%(asctime)s --- %(message)s',)
-    judge_one_c(321814,1498,1,1000,65536*1000)
-    raise
     start_work_thread()
-#    start_get_task()
     put_task_into_queue()
 
 if __name__=='__main__':
