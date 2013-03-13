@@ -2,6 +2,7 @@
 #coding=utf-8
 import os
 import re
+import sys
 import psutil
 import shutil
 import subprocess
@@ -14,48 +15,54 @@ import config
 import lorun
 import threading
 from Queue import Queue
-try:
-    os.setuid(int(os.popen("id -u %s"%"nobody").read()))
+try: #降低程序运行权限，防止恶意代码
+    os.setuid(int(os.popen("id -u %s"%"nobody").read())) 
 except:
-    logging.error("please run this program as root")
+    logging.error("please run this program as root!")
+    sys.exit(-1)
 q = Queue(config.queue_size)   #初始化队列
-dblock = threading.Lock()
+dblock = threading.Lock()      #数据库锁，保证一个时间只能一个程序都写数据库
 def worker():
+    '''工作线程，循环扫描队列，获得评判任务并执行'''
     while True:
-        if q.empty() is True:
+        if q.empty() is True: #队列为空，空闲
             logging.info("%s idle"%(threading.current_thread().name))
-        task = q.get()
+        task = q.get()  # 获取任务，如果队列为空则阻塞
         solution_id = task['solution_id']
         problem_id = task['problem_id']
         language = task['pro_lang']
         user_id = task['user_id']
-        data_count = get_data_count(task['problem_id'])
+        data_count = get_data_count(task['problem_id']) #获取测试数据的个数
         logging.info("judging %s"%solution_id)
-        result=run(problem_id,solution_id,language,data_count,user_id)
+        result=run(problem_id,solution_id,language,data_count,user_id) #评判
         logging.info("%s result %s"%(result['solution_id'],result['result']))
         dblock.acquire()
-        update_result(result)
+        update_result(result) #将结果写入数据库
         dblock.release()
-        if config.auto_clean == True:
+        if config.auto_clean == True:  #清理work目录
             clean_work_dir(result['solution_id'])
-        q.task_done()
+        q.task_done()   #一个任务完成
 
 def clean_work_dir(solution_id):
+    '''清理word目录，删除临时文件'''
     dir_name = os.path.join(config.work_dir,str(solution_id))
     shutil.rmtree(dir_name)
 
 def start_work_thread():
+    '''开启工作线程'''
     for i in range(config.count_thread):
         t = threading.Thread(target=worker)
         t.deamon = True
         t.start()
 
 def start_get_task():
+    '''开启获取任务线程'''
     t = threading.Thread(target=put_task_into_queue, name="get_task")
     t.deamon = True
     t.start()
 
 def update_compile_info(solution_id,info):
+    '''更新数据库编译错误信息'''
     con=connect_to_db()
     cur = con.cursor()
     info = MySQLdb.escape_string(info)
@@ -70,6 +77,7 @@ def update_compile_info(solution_id,info):
     con.close()
 
 def get_problem_limit(problem_id):
+    '''获得题目的时间和内存限制'''
     con=connect_to_db()
     cur = con.cursor()
     sql = "select time_limit,memory_limit from problem where problem_id = %s"%problem_id
@@ -84,6 +92,7 @@ def get_problem_limit(problem_id):
     return data
 
 def update_solution_status(solution_id,result=12):
+    '''实时更新评测信息'''
     con=connect_to_db()
     cur = con.cursor()
     update_sql = "update solution set result = %s where solution_id = %s"%(result,solution_id)
@@ -98,22 +107,27 @@ def update_solution_status(solution_id,result=12):
     return 0
 
 def connect_to_db():
+    '''连接数据库,连接失败自动重新连接,防止因数据库重启或中断导致评测程序中断'''
     con = None
     while True:
         try:
             con = MySQLdb.connect(config.db_host,config.db_user,config.db_password,
                                   config.db_name,charset=config.db_charset)
             return con
-        except:
+        except: 
             logging.error('Cannot connect to database,trying again')
             time.sleep(1)
 
 def update_result(result):
+    '''更新评测结果'''
     con=connect_to_db()
     cur = con.cursor()
+    #更新solution信息
     sql = "update solution set take_time = %s , take_memory = %s, result = %s where solution_id = %s"%(result['take_time'],result['take_memory'],result['result'],result['solution_id'])
+    #更新用户解题数和做题数信息
     update_ac_sql = "update user set accept = (select count(distinct problem_id) from solution where result = 1 and user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
     update_sub_sql = "update user set submit = (select count(problem_id) from solution where user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
+    #更新题目AC数和提交数信息
     update_problem_ac="UPDATE problem SET accept=(SELECT count(*) FROM solution WHERE problem_id=%s AND result=1) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
     update_problem_sub="UPDATE problem SET submit=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
     try:
@@ -132,20 +146,21 @@ def update_result(result):
 
 
 def get_data_count(problem_id):
+    '''获得测试数据的个数信息'''
     full_path = os.path.join(config.data_dir,str(problem_id))
     try:
         files = os.listdir(full_path)
     except OSError,e:
-        logging.error("124")
         logging.error(e)
         return 0
     count = 0
     for item in files:
-        if item.endswith(".in"):
+        if item.endswith(".in") and item.startswith("data"):
             count += 1
     return count
 
 def get_code(solution_id,problem_id,pro_lang):
+    '''从数据库获取代码并写入work目录下对应的文件'''
     file_name = {
         "gcc":"main.c",
         "g++":"main.cpp",
@@ -170,29 +185,26 @@ def get_code(solution_id,problem_id,pro_lang):
             logging.error("cannot get code of runid %s"%solution_id)
             return False
     except TypeError,e:
-        logging.error("163")
         logging.error(e)
         return False
     try:
         work_path = os.path.join(config.work_dir,str(solution_id))
         os.mkdir(work_path)
     except OSError,e:
-        if str(e).find("exist")>0:
+        if str(e).find("exist")>0: #文件夹已经存在
             pass
         else:
-            logging.error("172")
             logging.error(e)
             return False
     try:
-#        real_path = "/work/%s/%s"%(solution_id,file_name[pro_lang])
         real_path = os.path.join(config.work_dir,str(solution_id),file_name[pro_lang])
     except KeyError,e:
-        logging.error("177")
         logging.error(e)
         return False
     try:
         f = codecs.open(real_path,'w')
-        code = del_code_note(code)
+        if pro_lang in ['gcc','g++','java','golang']:
+            code = del_code_note(code) #删除注释,防止因为中文问题无法将代码写入文件
         try:
             f.write(code)
         except:
@@ -201,19 +213,20 @@ def get_code(solution_id,problem_id,pro_lang):
             return False
         f.close()
     except OSError,e:
-        logging.error("189")
         logging.error(e)
         return False
     return True
 
 def del_code_note(code):
+    '''删除代码注释'''
     code = re.sub("//.*",'',code)
     code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
     return code
 
 def put_task_into_queue():
+    '''循环扫描数据库,将任务添加到队列'''
     while True:
-        q.join()
+        q.join() #阻塞程序,直到队列里面的任务全部完成
         con=connect_to_db()
         cur = con.cursor()
         sql = "select solution_id,problem_id,user_id,contest_id,pro_lang from solution where result = 0"
@@ -225,14 +238,14 @@ def put_task_into_queue():
         data = cur.fetchall()
         cur.close()
         con.close()
-        time.sleep(0.2)
+        time.sleep(0.2) #延时0.2秒,防止因速度太快不能获取代码
         for i in data:
             solution_id,problem_id,user_id,contest_id,pro_lang = i
             dblock.acquire()
             ret = get_code(solution_id,problem_id,pro_lang)
             dblock.release()
             if ret == False:
-                '''防止因速度太快不能获取代码'''
+                #防止因速度太快不能获取代码
                 time.sleep(0.5)
                 dblock.acquire()
                 ret = get_code(solution_id,problem_id,pro_lang)
@@ -258,56 +271,51 @@ def put_task_into_queue():
 def compile(solution_id,language):
     '''将程序编译成可执行文件'''
     language = language.lower()
-#    dir_work = "/work/%s/"%solution_id
     dir_work = os.path.join(config.work_dir,str(solution_id))
-    if language == "gcc":
-        cmd = "gcc main.c -o main -Wall -lm -O2 -std=c99 --static -DONLINE_JUDGE"
-    elif language == 'g++':
-        cmd = "g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main"
-    elif language == "java":
-        cmd = "javac Main.java"
-    elif language == 'pascal':
-        cmd = 'fpc main.pas -O2 -Co -Ct -Ci'
-    elif language == 'golang':
-        cmd = 'go build main.go'
-    else:
+    build_cmd = {
+        "gcc"    : "gcc main.c -o main -Wall -lm -O2 -std=c99 --static -DONLINE_JUDGE",
+        "g++"    : "g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main",
+        "java"   : "javac Main.java",
+        "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
+        "golang" : 'go build main.go',
+    }
+    if language not in build_cmd.keys():
         return False
-    p = subprocess.Popen(cmd,shell=True,cwd=dir_work,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    out,err =  p.communicate()
+    p = subprocess.Popen(build_cmd[language],shell=True,cwd=dir_work,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    out,err =  p.communicate()#获取编译错误信息
     err_txt_path = os.path.join(config.work_dir,str(solution_id),'error.txt')
     f = file(err_txt_path,'w')
     f.write(err)
     f.write(out)
     f.close()
-    if p.returncode == 0:
+    if p.returncode == 0: #返回值为0,编译成功
         return True
     dblock.acquire()
-    update_compile_info(solution_id,err+out)
+    update_compile_info(solution_id,err+out) #编译失败,更新题目的编译错误信息
     dblock.release()
     return False
 
 def judge_result(problem_id,solution_id,data_num):
+    '''对输出数据进行评测'''
     logging.debug("Judging result")
-#    currect_result = "/data/%s/data%s.out"%(problem_id,data_num)
     currect_result = os.path.join(config.data_dir,str(problem_id),'data%s.out'%data_num)
-#    user_result = "/work/%s/out%s.txt"%(solution_id,data_num)
     user_result = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
-    curr = file(currect_result).read().replace('\r','').rstrip()
+    curr = file(currect_result).read().replace('\r','').rstrip()#删除\r,删除行末的空格和换行
     user = file(user_result).read().replace('\r','').rstrip()
-    if curr == user:
+    if curr == user:       #完全相同:AC
         return "Accepted"
-    if curr.split() == user.split():
+    if curr.split() == user.split(): #除去空格,tab,换行相同:PE
         return "Presentation Error"
-    if curr in user:
+    if curr in user:  #输出多了
         return "Output limit"
-    return "Wrong Answer"
+    return "Wrong Answer"  #其他WA
 
 def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
+    '''评测一组数据'''
     input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%data_num)
     input_data = file(input_path)
     output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
     temp_out_data = file(output_path,'w')
-#    main_exe = '/work/%s/main'%(solution_id)
     main_exe = os.path.join(config.work_dir,str(solution_id),'main')
     runcfg = {
         'args':[main_exe],
@@ -323,6 +331,7 @@ def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
     return rst
 
 def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
+    '''评测编译类型语言'''
     max_mem = 0
     max_time = 0
     for i in range(data_count):
@@ -359,8 +368,8 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
     return program_info
 
 def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
+    '''评测java程序'''
     cmd = "/usr/bin/java Main"
-#    work_dir = '/work/%s'%solution_id
     work_dir = os.path.join(config.work_dir,str(solution_id))
     max_rss = 0
     max_vms = 0
@@ -471,6 +480,7 @@ def run(problem_id,solution_id,language,data_count,user_id):
     return result
 
 def check_thread():
+    '''检测评测程序是否存在,小于config规定数目则启动新的'''
     while True:
         try:
             if threading.active_count() < config.count_thread + 2:
@@ -483,17 +493,16 @@ def check_thread():
             pass
 
 def start_protect():
+    '''开启守护进程'''
     t = threading.Thread(target=check_thread, name="check_thread")
     t.deamon = True
     t.start()
-
 
 def main():
     logging.basicConfig(level=logging.INFO,
                         format = '%(asctime)s --- %(message)s',)
     start_get_task()
     start_work_thread()
-#    put_task_into_queue()
     start_protect()
 
 if __name__=='__main__':
