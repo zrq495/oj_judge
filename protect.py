@@ -2,8 +2,8 @@
 #coding=utf-8
 import os
 import re
-import sys
 import psutil
+import shutil
 import subprocess
 import codecs
 import logging
@@ -12,9 +12,12 @@ import time
 import MySQLdb
 import config
 import lorun
-from Queue import Queue
 import threading
-os.setuid(int(os.popen("id -u %s"%"nobody").read()))
+from Queue import Queue
+try:
+    os.setuid(int(os.popen("id -u %s"%"nobody").read()))
+except:
+    logging.error("please run this program as root")
 q = Queue(config.queue_size)   #初始化队列
 dblock = threading.Lock()
 def worker():
@@ -33,7 +36,13 @@ def worker():
         dblock.acquire()
         update_result(result)
         dblock.release()
+        if config.auto_clean == True:
+            clean_work_dir(result['solution_id'])
         q.task_done()
+
+def clean_work_dir(solution_id):
+    dir_name = os.path.join(config.work_dir,str(solution_id))
+    shutil.rmtree(dir_name)
 
 def start_work_thread():
     for i in range(config.count_thread):
@@ -123,7 +132,7 @@ def update_result(result):
 
 
 def get_data_count(problem_id):
-    full_path = "/data/%s/"%problem_id
+    full_path = os.path.join(config.data_dir,str(problem_id))
     try:
         files = os.listdir(full_path)
     except OSError,e:
@@ -142,6 +151,7 @@ def get_code(solution_id,problem_id,pro_lang):
         "g++":"main.cpp",
         "java":"Main.java",
         "pascal":"main.pas",
+        "golang":"main.go",
     }
     con=connect_to_db()
     cur = con.cursor()
@@ -164,7 +174,8 @@ def get_code(solution_id,problem_id,pro_lang):
         logging.error(e)
         return False
     try:
-        os.mkdir('/work/%s/'%solution_id)
+        work_path = os.path.join(config.work_dir,str(solution_id))
+        os.mkdir(work_path)
     except OSError,e:
         if str(e).find("exist")>0:
             pass
@@ -173,7 +184,8 @@ def get_code(solution_id,problem_id,pro_lang):
             logging.error(e)
             return False
     try:
-        real_path = "/work/%s/%s"%(solution_id,file_name[pro_lang])
+#        real_path = "/work/%s/%s"%(solution_id,file_name[pro_lang])
+        real_path = os.path.join(config.work_dir,str(solution_id),file_name[pro_lang])
     except KeyError,e:
         logging.error("177")
         logging.error(e)
@@ -213,11 +225,18 @@ def put_task_into_queue():
         data = cur.fetchall()
         cur.close()
         con.close()
+        time.sleep(0.2)
         for i in data:
             solution_id,problem_id,user_id,contest_id,pro_lang = i
             dblock.acquire()
             ret = get_code(solution_id,problem_id,pro_lang)
             dblock.release()
+            if ret == False:
+                '''防止因速度太快不能获取代码'''
+                time.sleep(0.5)
+                dblock.acquire()
+                ret = get_code(solution_id,problem_id,pro_lang)
+                dblock.release()
             if ret == False:
                 dblock.acquire()
                 update_solution_status(solution_id,11)
@@ -234,12 +253,13 @@ def put_task_into_queue():
             dblock.acquire()
             update_solution_status(solution_id)
             dblock.release()
-        time.sleep(0.2)
+        time.sleep(0.5)
 
 def compile(solution_id,language):
     '''将程序编译成可执行文件'''
     language = language.lower()
-    dir_work = "/work/%s/"%solution_id
+#    dir_work = "/work/%s/"%solution_id
+    dir_work = os.path.join(config.work_dir,str(solution_id))
     if language == "gcc":
         cmd = "gcc main.c -o main -Wall -lm -O2 -std=c99 --static -DONLINE_JUDGE"
     elif language == 'g++':
@@ -248,11 +268,14 @@ def compile(solution_id,language):
         cmd = "javac Main.java"
     elif language == 'pascal':
         cmd = 'fpc main.pas -O2 -Co -Ct -Ci'
+    elif language == 'golang':
+        cmd = 'go build main.go'
     else:
         return False
     p = subprocess.Popen(cmd,shell=True,cwd=dir_work,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     out,err =  p.communicate()
-    f = file("/work/%s/error.txt"%solution_id,'w')
+    err_txt_path = os.path.join(config.work_dir,str(solution_id),'error.txt')
+    f = file(err_txt_path,'w')
     f.write(err)
     f.write(out)
     f.close()
@@ -265,8 +288,10 @@ def compile(solution_id,language):
 
 def judge_result(problem_id,solution_id,data_num):
     logging.debug("Judging result")
-    currect_result = "/data/%s/data%s.out"%(problem_id,data_num)
-    user_result = "/work/%s/out%s.txt"%(solution_id,data_num)
+#    currect_result = "/data/%s/data%s.out"%(problem_id,data_num)
+    currect_result = os.path.join(config.data_dir,str(problem_id),'data%s.out'%data_num)
+#    user_result = "/work/%s/out%s.txt"%(solution_id,data_num)
+    user_result = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
     curr = file(currect_result).read().replace('\r','').rstrip()
     user = file(user_result).read().replace('\r','').rstrip()
     if curr == user:
@@ -278,9 +303,12 @@ def judge_result(problem_id,solution_id,data_num):
     return "Wrong Answer"
 
 def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
-    input_data = file("/data/%s/data%s.in"%(problem_id,data_num))
-    temp_out_data = file("/work/%s/out%s.txt"%(solution_id,data_num),'w')
-    main_exe = '/work/%s/main'%(solution_id)
+    input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%data_num)
+    input_data = file(input_path)
+    output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
+    temp_out_data = file(output_path,'w')
+#    main_exe = '/work/%s/main'%(solution_id)
+    main_exe = os.path.join(config.work_dir,str(solution_id),'main')
     runcfg = {
         'args':[main_exe],
         'fd_in':input_data.fileno(),
@@ -332,15 +360,19 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
 
 def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
     cmd = "/usr/bin/java Main"
-    work_dir = '/work/%s'%solution_id
+#    work_dir = '/work/%s'%solution_id
+    work_dir = os.path.join(config.work_dir,str(solution_id))
     max_rss = 0
     max_vms = 0
     max_time = 0
     for i in range(data_count):
         args = shlex.split(cmd)
-        input_data = file('/data/%s/data%s.in'%(problem_id,i+1))
-        output_data = file('/work/%s/out%s.txt'%(solution_id,i+1),'w')
-        run_err_data = file('/work/%s/run_err%s.txt'%(solution_id,i+1),'w')
+        input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%(i+1))
+        output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%(i+1))
+        err_txt_path = os.path.join(config.work_dir,str(solution_id),'run_err%s.txt'%(i+1))
+        input_data = file(input_path)
+        output_data = file(output_path,'w')
+        run_err_data = file(err_txt_path,'w')
         p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
         start = time.time()
         pid = p.pid
