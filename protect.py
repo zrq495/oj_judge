@@ -300,8 +300,11 @@ def judge_result(problem_id,solution_id,data_num):
     logging.debug("Judging result")
     currect_result = os.path.join(config.data_dir,str(problem_id),'data%s.out'%data_num)
     user_result = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
-    curr = file(currect_result).read().replace('\r','').rstrip()#删除\r,删除行末的空格和换行
-    user = file(user_result).read().replace('\r','').rstrip()
+    try:
+        curr = file(currect_result).read().replace('\r','').rstrip()#删除\r,删除行末的空格和换行
+        user = file(user_result).read().replace('\r','').rstrip()
+    except:
+        return False
     if curr == user:       #完全相同:AC
         return "Accepted"
     if curr.split() == user.split(): #除去空格,tab,换行相同:PE
@@ -313,7 +316,10 @@ def judge_result(problem_id,solution_id,data_num):
 def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
     '''评测一组数据'''
     input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%data_num)
-    input_data = file(input_path)
+    try:
+        input_data = file(input_path)
+    except:
+        return False
     output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
     temp_out_data = file(output_path,'w')
     main_exe = os.path.join(config.work_dir,str(solution_id),'main')
@@ -336,6 +342,8 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
     max_time = 0
     for i in range(data_count):
         ret = judge_one_c_mem_time(solution_id,problem_id,i+1,time_limit+10,mem_limit)
+        if ret == False:
+            continue
         logging.debug(ret)
         if ret['result'] == 2:
             program_info['result'] = result_code["Time Limit Exceeded"]
@@ -353,6 +361,8 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
         if max_mem < ret['memoryused']:
             max_mem = ret['memoryused']
         result = judge_result(problem_id,solution_id,i+1)
+        if result == False:
+            continue
         if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result_code[result]
             break
@@ -379,9 +389,12 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
         input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%(i+1))
         output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%(i+1))
         err_txt_path = os.path.join(config.work_dir,str(solution_id),'run_err%s.txt'%(i+1))
-        input_data = file(input_path)
-        output_data = file(output_path,'w')
-        run_err_data = file(err_txt_path,'w')
+        try:
+            input_data = file(input_path)
+            output_data = file(output_path,'w')
+            run_err_data = file(err_txt_path,'w')
+        except:
+            continue
         p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
         start = time.time()
         pid = p.pid
@@ -420,6 +433,8 @@ def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_in
         logging.debug("max_rss = %s"%max_rss)
         logging.debug("max_vms = %s"%max_vms)
         result = judge_result(problem_id,solution_id,i+1)
+        if result == False:
+            continue
         if result == "Wrong Answer" or result == "Output limit":
             program_info['result'] = result
             break
