@@ -19,5 +19,5 @@ work_dir = "/work/"
 #data测试数据目录
 data_dir = "/data/"
 #自动清理评work目录
-auto_clean = True
+auto_clean = False
 

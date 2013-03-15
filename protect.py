@@ -3,7 +3,6 @@
 import os
 import re
 import sys
-import psutil
 import shutil
 import subprocess
 import codecs
@@ -112,7 +111,6 @@ def get_problem_limit(problem_id):
     data = run_sql(sql)
     return data[0]
 
-
 def get_code(solution_id,problem_id,pro_lang):
     '''从数据库获取代码并写入work目录下对应的文件'''
     file_name = {
@@ -120,7 +118,9 @@ def get_code(solution_id,problem_id,pro_lang):
         "g++":"main.cpp",
         "java":"Main.java",
         "pascal":"main.pas",
-        "golang":"main.go",
+        "go":"main.go",
+        'python2':'main.py',
+        'python3':'main.py',
     }
     select_code_sql = "select code_content from code where solution_id = %s"%solution_id
     feh = run_sql(select_code_sql)
@@ -145,8 +145,7 @@ def get_code(solution_id,problem_id,pro_lang):
         return False
     try:
         f = codecs.open(real_path,'w')
-        if pro_lang in ['gcc','g++','java','golang']:
-            code = del_code_note(code) #删除注释,防止因为中文问题无法将代码写入文件
+        code = del_code_note(code,pro_lang) #删除注释,防止因为中文问题无法将代码写入文件
         try:
             f.write(code)
         except:
@@ -159,10 +158,15 @@ def get_code(solution_id,problem_id,pro_lang):
         return False
     return True
 
-def del_code_note(code):
+def del_code_note(code,pro_lang):
     '''删除代码注释'''
-    code = re.sub("//.*",'',code)
-    code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
+    if pro_lang in ['gcc','g++','java','go']:
+        code = re.sub("//.*",'',code)
+        code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
+    elif pro_lang in ['python2','python3']:
+        code = re.sub("#.*",'',code)
+        code = re.sub(r"'''.*?'''",'',code,flags=re.M|re.S)
+        code = re.sub(r'""".*?"""','',code,flags=re.M|re.S)
     return code
 
 def put_task_into_queue():
@@ -210,7 +214,9 @@ def compile(solution_id,language):
         "g++"    : "g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main",
         "java"   : "javac Main.java",
         "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
-        "golang" : 'go build main.go',
+        "go"     : 'go build -ldflags "-s -w"  main.go',
+        "python2": 'python2 -m py_compile main.py',
+        "python3": 'python3 -m py_compile main.py',
     }
     if language not in build_cmd.keys():
         return False
@@ -246,7 +252,7 @@ def judge_result(problem_id,solution_id,data_num):
         return "Output limit"
     return "Wrong Answer"  #其他WA
 
-def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
+def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,language):
     '''评测一组数据'''
     input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%data_num)
     try:
@@ -255,9 +261,19 @@ def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
         return False
     output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%data_num)
     temp_out_data = file(output_path,'w')
-    main_exe = os.path.join(config.work_dir,str(solution_id),'main')
+    if language == 'java':
+        cmd = 'java -cp %s Main'%(os.path.join(config.work_dir,str(solution_id)))
+        main_exe = shlex.split(cmd)
+    elif language == 'python2':
+        cmd = 'python2 %s'%(os.path.join(config.work_dir,str(solution_id),'main.pyc'))
+        main_exe = shlex.split(cmd)
+    elif language == 'python3':
+        cmd = 'python3 %s'%(os.path.join(config.work_dir,str(solution_id),'main.pyc'))
+        main_exe = shlex.split(cmd)
+    else:
+        main_exe = [os.path.join(config.work_dir,str(solution_id),'main'),]
     runcfg = {
-        'args':[main_exe],
+        'args':main_exe,
         'fd_in':input_data.fileno(),
         'fd_out':temp_out_data.fileno(),
         'timelimit':time_limit, #in MS
@@ -269,25 +285,24 @@ def judge_one_c_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit):
     logging.debug(rst)
     return rst
 
-def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
+def judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code,language):
     '''评测编译类型语言'''
     max_mem = 0
     max_time = 0
     for i in range(data_count):
-        ret = judge_one_c_mem_time(solution_id,problem_id,i+1,time_limit+10,mem_limit)
+        ret = judge_one_mem_time(solution_id,problem_id,i+1,time_limit+10,mem_limit,language)
         if ret == False:
             continue
-        logging.debug(ret)
-        if ret['result'] == 2:
+        if ret['result'] == 5:
+            program_info['result'] =result_code["Runtime Error"]
+            return program_info
+        elif ret['result'] == 2:
             program_info['result'] = result_code["Time Limit Exceeded"]
             program_info['take_time'] = time_limit+10
             return program_info
         elif ret['result'] == 3:
             program_info['result'] =result_code["Memory Limit Exceeded"]
             program_info['take_memory'] = mem_limit
-            return program_info
-        elif ret['result'] == 5:
-            program_info['result'] =result_code["Runtime Error"]
             return program_info
         if max_time < ret["timeused"]:
             max_time = ret['timeused']
@@ -309,80 +324,6 @@ def judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,
     program_info['take_time'] = max_time
     program_info['take_memory'] = max_mem
     return program_info
-
-def judge_java(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code):
-    '''评测java程序'''
-    cmd = "/usr/bin/java Main"
-    work_dir = os.path.join(config.work_dir,str(solution_id))
-    max_rss = 0
-    max_vms = 0
-    max_time = 0
-    for i in range(data_count):
-        args = shlex.split(cmd)
-        input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%(i+1))
-        output_path = os.path.join(config.work_dir,str(solution_id),'out%s.txt'%(i+1))
-        err_txt_path = os.path.join(config.work_dir,str(solution_id),'run_err%s.txt'%(i+1))
-        try:
-            input_data = file(input_path)
-            output_data = file(output_path,'w')
-            run_err_data = file(err_txt_path,'w')
-        except:
-            continue
-        p = subprocess.Popen(args,env={"PATH":"/nonexistent"},cwd=work_dir,stdout=output_data,stdin=input_data,stderr=run_err_data)
-        start = time.time()
-        pid = p.pid
-        logging.debug(pid)
-        glan = psutil.Process(pid)
-        while True:
-            time_to_now = time.time()-start 
-            if psutil.pid_exists(pid) is False:
-                program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024.0
-                program_info['result'] = result_code["Runtime Error"]
-                return program_info
-            rss,vms = glan.get_memory_info()
-            if p.poll() == 0:
-                end = time.time()
-                break
-            if max_rss < rss:
-                max_rss = rss
-            if max_vms < vms:
-                max_vms = vms
-            if time_to_now > time_limit:
-                program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024.0
-                program_info['result'] = result_code["Time Limit Exceeded"]
-                glan.terminate()
-                return program_info
-            if max_rss > mem_limit:
-                program_info['take_time'] = time_to_now*1000
-                program_info['take_memory'] = max_rss/1024.0
-                program_info['result'] =result_code["Memory Limit Exceeded"]
-                glan.terminate()
-                return program_info
-        use_time = end - start
-        if max_time < use_time:
-            max_time = use_time
-        logging.debug("max_rss = %s"%max_rss)
-        logging.debug("max_vms = %s"%max_vms)
-        result = judge_result(problem_id,solution_id,i+1)
-        if result == False:
-            continue
-        if result == "Wrong Answer" or result == "Output limit":
-            program_info['result'] = result
-            break
-        elif result == 'Presentation Error':
-            program_info['result']=result
-        elif result == 'Accepted':
-            if program_info['result'] != 'Presentation Error':
-                program_info['result'] = result
-        else:
-            logging.error("judge did not get result")
-    program_info['take_time'] = max_time*1000
-    program_info['take_memory'] = max_rss/1024.0
-    program_info['result'] = result_code[program_info['result']]
-    return program_info
-
 
 def run(problem_id,solution_id,language,data_count,user_id):
     '''获取程序执行时间和内存'''
@@ -417,13 +358,7 @@ def run(problem_id,solution_id,language,data_count,user_id):
     if data_count == 0:#没有测试数据
         program_info['result'] = result_code["System Error"]
         return program_info
-    if language == "java":
-        time_limit = (time_limit+10)/1000.0
-        mem_limit = mem_limit * 1024
-        result = judge_java(solution_id,problem_id,data_count,
-                            time_limit,mem_limit,program_info,result_code)
-    else:
-        result = judge_c(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code)
+    result = judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code,language)
     logging.debug(result)
     return result
 
