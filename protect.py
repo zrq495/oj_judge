@@ -125,9 +125,13 @@ def get_code(solution_id,problem_id,pro_lang):
     select_code_sql = "select code_content from code where solution_id = %s"%solution_id
     feh = run_sql(select_code_sql)
     if feh is not None:
-        code = feh[0][0]
+        try:
+            code = feh[0][0]
+        except:
+            logging.error("1 cannot get code of runid %s"%solution_id)
+            return False
     else:
-        logging.error("cannot get code of runid %s"%solution_id)
+        logging.error("2 cannot get code of runid %s"%solution_id)
         return False
     try:
         work_path = os.path.join(config.work_dir,str(solution_id))
@@ -289,6 +293,9 @@ def judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,re
     '''评测编译类型语言'''
     max_mem = 0
     max_time = 0
+    if language in ["java",'python2','python3']:
+        time_limit = time_limit * 2
+        mem_limit = mem_limit * 2
     for i in range(data_count):
         ret = judge_one_mem_time(solution_id,problem_id,i+1,time_limit+10,mem_limit,language)
         if ret == False:
