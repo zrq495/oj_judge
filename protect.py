@@ -268,7 +268,7 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
         cmd = 'python2 %s'%(os.path.join(config.work_dir,str(solution_id),'main.pyc'))
         main_exe = shlex.split(cmd)
     elif language == 'python3':
-        cmd = 'python3 %s'%(os.path.join(config.work_dir,str(solution_id),'main.pyc'))
+        cmd = 'python3 %s'%(os.path.join(config.work_dir,str(solution_id),'__pycache__/main.cpython-33.pyc'))
         main_exe = shlex.split(cmd)
     else:
         main_exe = [os.path.join(config.work_dir,str(solution_id),'main'),]

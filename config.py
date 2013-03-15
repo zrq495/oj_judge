@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 #coding=utf-8
 #开启评测线程数目
-count_thread = 4
+count_thread = 8
 #评测程序队列容量
-queue_size = 4
+queue_size = 8
 #数据库地址
 db_host = "localhost"
 #数据库用户名
@@ -19,5 +19,4 @@ work_dir = "/work/"
 #data测试数据目录
 data_dir = "/data/"
 #自动清理评work目录
-auto_clean = False
-
+auto_clean = True
