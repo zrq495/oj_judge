@@ -168,8 +168,8 @@ def del_code_note(code,pro_lang):
     if pro_lang in ['gcc','g++','java','go']:
         code = re.sub("//.*",'',code)
         code = re.sub("/\*.*?\*/",'',code,flags=re.M|re.S)
-    elif pro_lang in ['python2','python3']:
-        code = re.sub("#.*",'',code)
+#    elif pro_lang in ['python2','python3']:
+#        code = re.sub("#.*",'',code)
 #        code = re.sub(r"'''.*?'''",'',code,flags=re.M|re.S)
 #        code = re.sub(r'""".*?"""','',code,flags=re.M|re.S)
     return code
