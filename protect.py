@@ -118,6 +118,7 @@ def get_code(solution_id,problem_id,pro_lang):
         "g++":"main.cpp",
         "java":"Main.java",
         'ruby':"main.rb",
+        "perl":"main.pl",
         "pascal":"main.pas",
         "go":"main.go",
         "lua":"main.lua",
@@ -215,13 +216,14 @@ def compile(solution_id,language):
     '''将程序编译成可执行文件'''
     language = language.lower()
     dir_work = os.path.join(config.work_dir,str(solution_id))
-    if language == "ruby":
-        return True
+#    if language == "ruby":
+#        return True
     build_cmd = {
         "gcc"    : "gcc main.c -o main -Wall -lm -O2 -std=c99 --static -DONLINE_JUDGE",
         "g++"    : "g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main",
         "java"   : "javac Main.java",
         "ruby"   : "reek main.rb",
+        "perl"   : "perl -c main.pl",
         "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
         "go"     : 'go build -ldflags "-s -w"  main.go',
         "python2": 'python2 -m py_compile main.py',
@@ -285,6 +287,9 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
         main_exe = shlex.split(cmd)
     elif language == "ruby":
         cmd = "ruby %s"%(os.path.join(config.work_dir,str(solution_id),"main.rb"))
+        main_exe = shlex.split(cmd)
+    elif language == "perl":
+        cmd = "perl %s"%(os.path.join(config.work_dir,str(solution_id),"main.pl"))
         main_exe = shlex.split(cmd)
     else:
         main_exe = [os.path.join(config.work_dir,str(solution_id),'main'),]
@@ -365,7 +370,7 @@ def judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,re
     '''评测编译类型语言'''
     max_mem = 0
     max_time = 0
-    if language in ["java",'python2','python3','ruby']:
+    if language in ["java",'python2','python3','ruby','perl']:
         time_limit = time_limit * 2
         mem_limit = mem_limit * 2
     for i in range(data_count):
