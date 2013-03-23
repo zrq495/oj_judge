@@ -119,6 +119,7 @@ def get_code(solution_id,problem_id,pro_lang):
         "java":"Main.java",
         "pascal":"main.pas",
         "go":"main.go",
+        "lua":"main.lua",
         'python2':'main.py',
         'python3':'main.py',
     }
@@ -218,9 +219,10 @@ def compile(solution_id,language):
         "g++"    : "g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main",
         "java"   : "javac Main.java",
         "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
-        "go"     : 'go build -ldflags "-s -w"  main.go',
+        "go"     : '/opt/golang/bin/go build -ldflags "-s -w"  main.go',
         "python2": 'python2 -m py_compile main.py',
         "python3": 'python3 -m py_compile main.py',
+        "lua"    : 'luac -o main main.lua'
     }
     if language not in build_cmd.keys():
         return False
@@ -274,6 +276,9 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
     elif language == 'python3':
         cmd = 'python3 %s'%(os.path.join(config.work_dir,str(solution_id),'__pycache__/main.cpython-33.pyc'))
         main_exe = shlex.split(cmd)
+    elif language == 'lua':
+        cmd = "lua %s"%(os.path.join(config.work_dir,str(solution_id),"main"))
+        main_exe = shlex.split(cmd)
     else:
         main_exe = [os.path.join(config.work_dir,str(solution_id),'main'),]
     runcfg = {
@@ -294,6 +299,7 @@ def check_dangerous_code(solution_id,language):
         code = file('/work/%s/main.py'%solution_id).readlines()
         support_modules = [
             're',       #正则表达式
+            'sys',      #sys.stdin
             'string',   #字符串处理
             'scanf',    #格式化输入
             'math',     #数学库
@@ -331,15 +337,15 @@ def check_dangerous_code(solution_id,language):
         if code.find('system')>=0:
             return False
         return True
-    if language == 'java':
-        code = file('/work/%s/main.java'%solution_id).read()
-        if code.find('Runtime.')>=0:
-            return False
-        return True
+#    if language == 'java':
+#        code = file('/work/%s/Main.java'%solution_id).read()
+#        if code.find('Runtime.')>=0:
+#            return False
+#        return True
     if language == 'go':
         code = file('/work/%s/main.go'%solution_id).read()
         danger_package = [
-            'os',
+            'os','path','net','sql','syslog','http','mail','rpc','smtp','exec','user',
         ]
         for item in danger_package:
             if code.find('"%s"'%item) >= 0:
