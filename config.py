@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 #coding=utf-8
 #开启评测线程数目
-count_thread = 8
+count_thread = 4
 #评测程序队列容量
-queue_size = 8
+queue_size = 4
 #数据库地址
 db_host = "localhost"
 #数据库用户名

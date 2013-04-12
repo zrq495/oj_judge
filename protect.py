@@ -15,6 +15,11 @@ import threading
 import MySQLdb
 from db import run_sql
 from Queue import Queue
+def low_level():
+    try:
+        os.setuid(int(os.popen("id -u %s"%"nobody").read())) 
+    except:
+        pass
 try: 
     #降低程序运行权限，防止恶意代码
     os.setuid(int(os.popen("id -u %s"%"nobody").read())) 
@@ -124,6 +129,7 @@ def get_code(solution_id,problem_id,pro_lang):
         "lua":"main.lua",
         'python2':'main.py',
         'python3':'main.py',
+        "haskell":"main.hs"
     }
     select_code_sql = "select code_content from code where solution_id = %s"%solution_id
     feh = run_sql(select_code_sql)
@@ -138,6 +144,7 @@ def get_code(solution_id,problem_id,pro_lang):
         return False
     try:
         work_path = os.path.join(config.work_dir,str(solution_id))
+        low_level()
         os.mkdir(work_path)
     except OSError,e:
         if str(e).find("exist")>0: #文件夹已经存在
@@ -151,12 +158,13 @@ def get_code(solution_id,problem_id,pro_lang):
         logging.error(e)
         return False
     try:
+        low_level()
         f = codecs.open(real_path,'w')
         code = del_code_note(code,pro_lang) #删除注释,防止因为中文问题无法将代码写入文件
         try:
             f.write(code)
         except:
-            logging.error("not write code to file")
+            logging.error("%s not write code to file"%solution_id)
             f.close()
             return False
         f.close()
@@ -198,6 +206,7 @@ def put_task_into_queue():
                 dblock.acquire()
                 update_solution_status(solution_id,11)
                 dblock.release()
+                clean_work_dir(solution_id)
                 continue
             task = {
                 "solution_id":solution_id,
@@ -213,6 +222,7 @@ def put_task_into_queue():
         time.sleep(0.5)
 
 def compile(solution_id,language):
+    low_level()
     '''将程序编译成可执行文件'''
     language = language.lower()
     dir_work = os.path.join(config.work_dir,str(solution_id))
@@ -225,10 +235,11 @@ def compile(solution_id,language):
         "ruby"   : "reek main.rb",
         "perl"   : "perl -c main.pl",
         "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
-        "go"     : 'go build -ldflags "-s -w"  main.go',
+        "go"     : '/opt/golang/bin/go build -ldflags "-s -w"  main.go',
+        "lua"    : 'luac -o main main.lua',
         "python2": 'python2 -m py_compile main.py',
         "python3": 'python3 -m py_compile main.py',
-        "lua"    : 'luac -o main main.lua'
+        "haskell": "ghc -o main main.hs",
     }
     if language not in build_cmd.keys():
         return False
@@ -247,6 +258,7 @@ def compile(solution_id,language):
     return False
 
 def judge_result(problem_id,solution_id,data_num):
+    low_level()
     '''对输出数据进行评测'''
     logging.debug("Judging result")
     currect_result = os.path.join(config.data_dir,str(problem_id),'data%s.out'%data_num)
@@ -265,6 +277,7 @@ def judge_result(problem_id,solution_id,data_num):
     return "Wrong Answer"  #其他WA
 
 def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,language):
+    low_level()
     '''评测一组数据'''
     input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%data_num)
     try:
@@ -300,6 +313,7 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
         'timelimit':time_limit, #in MS
         'memorylimit':mem_limit, #in KB
     }
+    low_level()
     rst = lorun.run(runcfg)
     input_data.close()
     temp_out_data.close()
@@ -367,6 +381,7 @@ def check_dangerous_code(solution_id,language):
 
 
 def judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,result_code,language):
+    low_level()
     '''评测编译类型语言'''
     max_mem = 0
     max_time = 0
@@ -410,6 +425,7 @@ def judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,re
     return program_info
 
 def run(problem_id,solution_id,language,data_count,user_id):
+    low_level()
     '''获取程序执行时间和内存'''
     dblock.acquire()
     time_limit,mem_limit=get_problem_limit(problem_id)
@@ -450,6 +466,7 @@ def run(problem_id,solution_id,language,data_count,user_id):
     return result
 
 def check_thread():
+    low_level()
     '''检测评测程序是否存在,小于config规定数目则启动新的'''
     while True:
         try:
@@ -464,11 +481,13 @@ def check_thread():
 
 def start_protect():
     '''开启守护进程'''
+    low_level()
     t = threading.Thread(target=check_thread, name="check_thread")
     t.deamon = True
     t.start()
 
 def main():
+    low_level()
     logging.basicConfig(level=logging.INFO,
                         format = '%(asctime)s --- %(message)s',)
     start_get_task()
