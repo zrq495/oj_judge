@@ -1,0 +1,247 @@
+<h1>Frequently Asked Questions</h1>
+
+<h3>我的程序要在哪里输入和输出数据？</h3>
+
+<p>你的程序必须从stdin（基本输入）读入数据并且从stdout（基本输出）输出数据。例如，你使用C语言的话，使用scanf读入数据，使用printf输出数据，你使用C++语言的话，还可以使用cin和cout读入和输出数据。</p>
+
+<p><em>* 注意：你提交的程序不能进行任何文件的读写操作，否则会返回“Wrong Answer”。 *</em></p>
+
+<h3>本OJ提供哪些编译器？编译环境是怎么样的？</h3>
+
+<p>本OJ目前提供多种语言编译器,它们的编译参数分别是：</p>
+
+<ul>
+<li><code>gcc     : gcc main.c -o main -Wall -lm -O2 -std=c99 --static -DONLINE_JUDGE</code></li>
+<li><code>g++     : g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main</code></li>
+<li><code>java    : javac Main.java</code></li>
+<li><code>ruby    : reek main.rb</code></li>
+<li><code>perl    : perl -c main.pl</code></li>
+<li><code>pascal  : fpc main.pas -O2 -Co -Ct -Ci</code></li>
+<li><code>go      : go build -ldflags "-s -w"  main.go</code></li>
+<li><code>lua     : luac -o main main.lua</code></li>
+<li><code>python2 : python2 -m py_compile main.py</code></li>
+<li><code>python3 : python3 -m py_compile main.py</code></li>
+<li><code>haskell : ghc -o main main.hs</code></li>
+</ul>
+
+<p>目前服务器运行在Linux平台下，提供的编译器的版本分别是：</p>
+
+<p><code>
+gcc     4.4.5
+g++     4.4.5
+java    1.6.2
+pascal  2.4.0
+ruby    2.0
+lua     5.1.4
+perl    5.10
+python2 2.7.3
+python3 3.3.0
+go      1.0
+ghc     7.6.2
+</code></p>
+
+<h3>为什么我提交的程序在OJ运行得到了Compile Error？而在我的电脑上运行得很好？</h3>
+
+<p>不同的编译器之间有一些语法的差异，如果你电脑上使用的编译器与本OJ提供的编译器不同，请注意它们之间的差异，提交时请使用相应的编译器进行提交。</p>
+
+<h3>我要怎么使用64-bit整型？</h3>
+
+<p><code>C/C++</code> 评测程序只支持<code>long long</code>，不支持<code>int64</code></p>
+
+<p>有符号64-bit整型，取值范围为：<code>-9223372036854775808</code> 到 <code>9223372036854775807</code>。</p>
+
+<p>无符号64-bit整型，取值范围为：<code>0</code> 到 <code>18446744073709551615</code>。</p>
+
+<h3>OJ返回的结果分别是什么意思？</h3>
+
+<p>以下是OJ可能返回的结果和其意义：</p>
+
+<ul>
+<li><code>Accepted</code></li>
+</ul>
+
+<p>恭喜！ 你的程序是正确的。</p>
+
+<ul>
+<li><code>Presentation Error</code></li>
+</ul>
+
+<p>你的程序输出时表达错误，如果看到这样的结果，说明你的程序已经基本正确了，只是多或少打了换行符或者多或少输出了空格，检查一下你的程序和题目要求吧，胜利就在眼前！</p>
+
+<ul>
+<li><code>Wrong Answer</code></li>
+</ul>
+
+<p>你的程序输出的结果不正确。</p>
+
+<ul>
+<li><code>Time Limit Exceeded</code></li>
+</ul>
+
+<p>你的程序尝试使用超过题目限制的时间，可能是你的程序内存在死循环或者你的程序的算法效率太低。</p>
+
+<ul>
+<li><code>Memory Limit Exceeded</code></li>
+</ul>
+
+<p>你的程序尝试使用超过题目限制的内存。</p>
+
+<ul>
+<li><code>Runtime Error</code></li>
+</ul>
+
+<p>你的程序发生了运行时错误。可能是由于除以0、数组越界或指针访问出错等运行时问题。</p>
+
+<ul>
+<li><code>Compile Error</code></li>
+</ul>
+
+<p>你的程序不能通过编译，请点击该结果可以查看编译器提示。</p>
+
+<ul>
+<li><code>Output Limit Exceeded</code></li>
+</ul>
+
+<p>你的程序的输出过多。请检查你的程序是否存在死循环问题。</p>
+
+<ul>
+<li><code>Waiting</code></li>
+</ul>
+
+<p>你的程序正在评测中，请稍候。</p>
+
+<h3>第1000号题目怎么解答？</h3>
+
+<p>以下是第1000号题目的各种语言的参考程序：</p>
+
+<ul>
+<li>C语言</li>
+</ul>
+
+<p>```c</p>
+
+<h1>include <stdio.h></h1>
+
+<p>int main()
+{
+      int a,b;
+      scanf("%d%d",&amp;a,&amp;b);
+      printf("%d\n",a+b);
+      return 0;
+}
+```</p>
+
+<ul>
+<li>C++</li>
+</ul>
+
+<p>```cpp</p>
+
+<h1>include <iostream></h1>
+
+<p>using namespace std;
+int main()
+{
+    int a,b;
+    cin>>a>>b;
+    cout&lt;<a+b&lt;<endl;
+    return 0;
+}
+```</p>
+
+<ul>
+<li>PASCAL</li>
+</ul>
+
+<p><code>pascal
+var
+    a,b:integer;
+begin
+    readln(a,b);
+    writeln(a+b);
+end.
+</code></p>
+
+<ul>
+<li>Java</li>
+</ul>
+
+<p><code>java
+import java.io.*;
+import java.util.*;
+public class Main
+{
+    public static void main(String[] args)
+    {
+       Scanner cin = new Scanner ( System.in );
+       int a,b;
+       a=cin.nextInt();
+       b=cin.nextInt();
+       System.out.println(a+b);
+    }
+}
+</code></p>
+
+<ul>
+<li>haskell</li>
+</ul>
+
+<p><code>haskell
+main = getLine &gt;&gt;= print . sum . map read . words
+</code></p>
+
+<ul>
+<li>go</li>
+</ul>
+
+<p><code>go
+package main
+import "fmt" <br />
+func main(){ <br />
+    var a,b int <br />
+    fmt.Scanf("%d %d", &amp;a,&amp;b) <br />
+    fmt.Printf("%d", a+b) <br />
+}
+</code></p>
+
+<ul>
+<li>lua</li>
+</ul>
+
+<p><code>lua
+a,b = io.read("*number", "*number")
+print(a+b)
+</code></p>
+
+<ul>
+<li>perl</li>
+</ul>
+
+<p><code>perl
+my ($a,$b) = split(/\D+/,&lt;STDIN&gt;);
+print "$a $b " . ($a + $b) . "\n";
+</code></p>
+
+<ul>
+<li>ruby</li>
+</ul>
+
+<p><code>ruby
+puts gets.split.map(&amp;:to_i).inject(&amp;:+)
+</code></p>
+
+<ul>
+<li>python2</li>
+</ul>
+
+<p><code>python
+print sum(int(x) for x in raw_input().split())
+</code></p>
+
+<ul>
+<li>python3</li>
+</ul>
+
+<p><code>python
+print(sum(int(x) for x in raw_input().split()))
+</code></p>
