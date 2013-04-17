@@ -13,7 +13,7 @@ import config
 import lorun
 import threading
 import MySQLdb
-from db import run_sql
+from db import run_sql,run_sql_yield
 from Queue import Queue
 def low_level():
     try:
@@ -29,7 +29,10 @@ except:
 #初始化队列
 q = Queue(config.queue_size)
 #数据库锁，保证一个时间只能一个程序都写数据库
-dblock = threading.Lock()
+#dblock = threading.Lock()
+runid_inqueue_set = set()
+sql_yield = run_sql_yield()
+sql_yield.next()
 
 def worker():
     '''工作线程，循环扫描队列，获得评判任务并执行'''
@@ -41,13 +44,17 @@ def worker():
         problem_id = task['problem_id']
         language = task['pro_lang']
         user_id = task['user_id']
+#        dblock.acquire()
+        update_solution_status(solution_id) #将状态改为judging
+#        dblock.release()
+        runid_inqueue_set.remove(int(solution_id))
         data_count = get_data_count(task['problem_id']) #获取测试数据的个数
         logging.info("judging %s"%solution_id)
         result=run(problem_id,solution_id,language,data_count,user_id) #评判
         logging.info("%s result %s"%(result['solution_id'],result['result']))
-        dblock.acquire()
+#        dblock.acquire()
         update_result(result) #将结果写入数据库
-        dblock.release()
+#        dblock.release()
         if config.auto_clean == True:  #清理work目录
             clean_work_dir(result['solution_id'])
         q.task_done()   #一个任务完成
@@ -55,7 +62,10 @@ def worker():
 def clean_work_dir(solution_id):
     '''清理word目录，删除临时文件'''
     dir_name = os.path.join(config.work_dir,str(solution_id))
-    shutil.rmtree(dir_name)
+    try:
+        shutil.rmtree(dir_name)
+    except:
+        logging.error("rm error")
 
 def start_work_thread():
     '''开启工作线程'''
@@ -87,7 +97,8 @@ def get_data_count(problem_id):
 def update_solution_status(solution_id,result=12):
     '''实时更新评测信息'''
     update_sql = "update solution set result = %s where solution_id = %s"%(result,solution_id)
-    run_sql(update_sql)
+    sql_yield.send(update_sql)
+#    run_sql(update_sql)
     return 0
 
 def update_result(result):
@@ -100,20 +111,23 @@ def update_result(result):
     #更新题目AC数和提交数信息
     update_problem_ac="UPDATE problem SET accept=(SELECT count(*) FROM solution WHERE problem_id=%s AND result=1) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
     update_problem_sub="UPDATE problem SET submit=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
-    run_sql([sql,update_ac_sql,update_sub_sql,update_problem_ac,update_problem_sub])
+#    run_sql([sql,update_ac_sql,update_sub_sql,update_problem_ac,update_problem_sub])
+    sql_yield.send([sql,update_ac_sql,update_sub_sql,update_problem_ac,update_problem_sub])
     return 0
 
 def update_compile_info(solution_id,info):
     '''更新数据库编译错误信息'''
     info = MySQLdb.escape_string(info)
     sql = "insert into compile_info(solution_id,compile_info) values (%s,'%s')"%(solution_id,info)
-    run_sql(sql)
+   # run_sql(sql)
+    sql_yield.send(sql)
     return 0
 
 def get_problem_limit(problem_id):
     '''获得题目的时间和内存限制'''
     sql = "select time_limit,memory_limit from problem where problem_id = %s"%problem_id
-    data = run_sql(sql)
+   # data = run_sql(sql)
+    data = sql_yield.send(sql)
     return data[0]
 
 def get_code(solution_id,problem_id,pro_lang):
@@ -132,7 +146,8 @@ def get_code(solution_id,problem_id,pro_lang):
         "haskell":"main.hs"
     }
     select_code_sql = "select code_content from code where solution_id = %s"%solution_id
-    feh = run_sql(select_code_sql)
+    #feh = run_sql(select_code_sql)
+    feh = sql_yield.send(select_code_sql)
     if feh is not None:
         try:
             code = feh[0][0]
@@ -187,25 +202,30 @@ def del_code_note(code,pro_lang):
 def put_task_into_queue():
     '''循环扫描数据库,将任务添加到队列'''
     while True:
-        q.join() #阻塞程序,直到队列里面的任务全部完成
+#        q.join() #阻塞程序,直到队列里面的任务全部完成
         sql = "select solution_id,problem_id,user_id,contest_id,pro_lang from solution where result = 0"
-        data = run_sql(sql)
+        #data = run_sql(sql)
+        data = sql_yield.send(sql)
         time.sleep(0.2) #延时0.2秒,防止因速度太快不能获取代码
         for i in data:
             solution_id,problem_id,user_id,contest_id,pro_lang = i
-            dblock.acquire()
+            if int(solution_id) in runid_inqueue_set:
+                time.sleep(0.3)
+                continue
+            runid_inqueue_set.add(int(solution_id))
+    #        dblock.acquire()
             ret = get_code(solution_id,problem_id,pro_lang)
-            dblock.release()
+    #        dblock.release()
             if ret == False:
                 #防止因速度太快不能获取代码
                 time.sleep(0.5)
-                dblock.acquire()
+     #           dblock.acquire()
                 ret = get_code(solution_id,problem_id,pro_lang)
-                dblock.release()
+     #           dblock.release()
             if ret == False:
-                dblock.acquire()
+      #          dblock.acquire()
                 update_solution_status(solution_id,11)
-                dblock.release()
+      #          dblock.release()
                 clean_work_dir(solution_id)
                 continue
             task = {
@@ -216,9 +236,6 @@ def put_task_into_queue():
                 "pro_lang":pro_lang,
             }
             q.put(task)
-            dblock.acquire()
-            update_solution_status(solution_id)
-            dblock.release()
         time.sleep(0.5)
 
 def compile(solution_id,language):
@@ -252,9 +269,9 @@ def compile(solution_id,language):
     f.close()
     if p.returncode == 0: #返回值为0,编译成功
         return True
-    dblock.acquire()
+ #   dblock.acquire()
     update_compile_info(solution_id,err+out) #编译失败,更新题目的编译错误信息
-    dblock.release()
+ #   dblock.release()
     return False
 
 def judge_result(problem_id,solution_id,data_num):
@@ -314,7 +331,10 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
         'memorylimit':mem_limit, #in KB
     }
     low_level()
-    rst = lorun.run(runcfg)
+    try:
+        rst = lorun.run(runcfg)
+    except:
+        logging.error("lorun Error")
     input_data.close()
     temp_out_data.close()
     logging.debug(rst)
@@ -427,9 +447,9 @@ def judge(solution_id,problem_id,data_count,time_limit,mem_limit,program_info,re
 def run(problem_id,solution_id,language,data_count,user_id):
     low_level()
     '''获取程序执行时间和内存'''
-    dblock.acquire()
+#    dblock.acquire()
     time_limit,mem_limit=get_problem_limit(problem_id)
-    dblock.release()
+#    dblock.release()
     program_info = {
         "solution_id":solution_id,
         "problem_id":problem_id,
