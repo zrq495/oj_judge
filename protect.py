@@ -141,6 +141,7 @@ def get_code(solution_id,problem_id,pro_lang):
         "pascal":"main.pas",
         "go":"main.go",
         "lua":"main.lua",
+		"dao":"main.dao",
         'python2':'main.py',
         'python3':'main.py',
         "haskell":"main.hs"
@@ -254,6 +255,7 @@ def compile(solution_id,language):
         "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
         "go"     : '/opt/golang/bin/go build -ldflags "-s -w"  main.go',
         "lua"    : 'luac -o main main.lua',
+		"dao"    : "ls",
         "python2": 'python2 -m py_compile main.py',
         "python3": 'python3 -m py_compile main.py',
         "haskell": "ghc -o main main.hs",
@@ -321,6 +323,9 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
         main_exe = shlex.split(cmd)
     elif language == "perl":
         cmd = "perl %s"%(os.path.join(config.work_dir,str(solution_id),"main.pl"))
+        main_exe = shlex.split(cmd)
+	elif language == "dao":
+        cmd = "dao %s"%(os.path.join(config.work_dir,str(solution_id),"main.dao"))
         main_exe = shlex.split(cmd)
     else:
         main_exe = [os.path.join(config.work_dir,str(solution_id),'main'),]
