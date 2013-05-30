@@ -44,10 +44,10 @@ def worker():
         problem_id = task['problem_id']
         language = task['pro_lang']
         user_id = task['user_id']
+        runid_inqueue_set.remove(int(solution_id))
 #        dblock.acquire()
         update_solution_status(solution_id) #将状态改为judging
 #        dblock.release()
-        runid_inqueue_set.remove(int(solution_id))
         data_count = get_data_count(task['problem_id']) #获取测试数据的个数
         logging.info("judging %s"%solution_id)
         result=run(problem_id,solution_id,language,data_count,user_id) #评判
@@ -163,7 +163,7 @@ def get_code(solution_id,problem_id,pro_lang):
         os.mkdir(work_path)
     except OSError,e:
         if str(e).find("exist")>0: #文件夹已经存在
-            pass
+            logging.info("dir exist")
         else:
             logging.error(e)
             return False
@@ -212,13 +212,12 @@ def put_task_into_queue():
             if int(solution_id) in runid_inqueue_set:
                 time.sleep(0.3)
                 continue
-            runid_inqueue_set.add(int(solution_id))
     #        dblock.acquire()
             ret = get_code(solution_id,problem_id,pro_lang)
     #        dblock.release()
             if ret == False:
                 #防止因速度太快不能获取代码
-                time.sleep(0.5)
+                time.sleep(1)
      #           dblock.acquire()
                 ret = get_code(solution_id,problem_id,pro_lang)
      #           dblock.release()
@@ -235,6 +234,7 @@ def put_task_into_queue():
                 "user_id":user_id,
                 "pro_lang":pro_lang,
             }
+            runid_inqueue_set.add(int(solution_id))
             q.put(task)
         time.sleep(0.5)
 
@@ -249,7 +249,7 @@ def compile(solution_id,language):
         "gcc"    : "gcc main.c -o main -Wall -lm -O2 -std=c99 --static -DONLINE_JUDGE",
         "g++"    : "g++ main.cpp -O2 -Wall -lm --static -DONLINE_JUDGE -o main",
         "java"   : "javac Main.java",
-        "ruby"   : "reek main.rb",
+        "ruby"   : "ruby -c main.rb",
         "perl"   : "perl -c main.pl",
         "pascal" : 'fpc main.pas -O2 -Co -Ct -Ci',
         "go"     : '/opt/golang/bin/go build -ldflags "-s -w"  main.go',
@@ -294,6 +294,7 @@ def judge_result(problem_id,solution_id,data_num):
     return "Wrong Answer"  #其他WA
 
 def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,language):
+    rst = None
     low_level()
     '''评测一组数据'''
     input_path = os.path.join(config.data_dir,str(problem_id),'data%s.in'%data_num)
@@ -471,9 +472,9 @@ def run(problem_id,solution_id,language,data_count,user_id):
         "System Error":11,
         "Judging":12,
     }
-    if check_dangerous_code(solution_id,language) == False:
-        program_info['result'] = result_code["Runtime Error"]
-        return program_info
+#    if check_dangerous_code(solution_id,language) == False:
+#        program_info['result'] = result_code["Runtime Error"]
+#        return program_info
     compile_result = compile(solution_id,language)
     if compile_result is False:#编译错误
         program_info['result'] = result_code["Compile Error"]
