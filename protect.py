@@ -18,8 +18,8 @@ from Queue import Queue
 def low_level():
     try:
         os.setuid(int(os.popen("id -u %s"%"nobody").read())) 
-    except:
-        pass
+    except Exception as e:
+        logging.error(e)
 try: 
     #降低程序运行权限，防止恶意代码
     os.setuid(int(os.popen("id -u %s"%"nobody").read())) 
@@ -88,6 +88,9 @@ def get_data_count(problem_id):
     except OSError,e:
         logging.error(e)
         return 0
+    except Exception as e:
+        logging.error(e)
+        return 0
     count = 0
     for item in files:
         if item.endswith(".in") and item.startswith("data"):
@@ -96,7 +99,7 @@ def get_data_count(problem_id):
 
 def update_solution_status(solution_id,result=12):
     '''实时更新评测信息'''
-    update_sql = "update solution set result = %s where solution_id = %s"%(result,solution_id)
+    update_sql = "update solution set result = %s where id = %s"%(result,solution_id)
     sql_yield.send(update_sql)
 #    run_sql(update_sql)
     return 0
@@ -104,13 +107,13 @@ def update_solution_status(solution_id,result=12):
 def update_result(result):
     '''更新评测结果'''
     #更新solution信息
-    sql = "update solution set take_time = %s , take_memory = %s, result = %s where solution_id = %s"%(result['take_time'],result['take_memory'],result['result'],result['solution_id'])
+    sql = "update solution set take_time = %s , take_memory = %s, result = %s where id = %s"%(result['take_time'],result['take_memory'],result['result'],result['solution_id'])
     #更新用户解题数和做题数信息
-    update_ac_sql = "update user set accept = (select count(distinct problem_id) from solution where result = 1 and user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
-    update_sub_sql = "update user set submit = (select count(problem_id) from solution where user_id = %s) where user_id = %s;"%(result['user_id'],result['user_id'])
+    update_ac_sql = "update user_statistics set accepts_count = (select count(distinct problem_id) from solution where result = 1 and user_id = %s) where id = %s;"%(result['user_id'],result['user_id'])
+    update_sub_sql = "update user_statistics set solutions_count = (select count(problem_id) from solution where user_id = %s) where id = %s;"%(result['user_id'],result['user_id'])
     #更新题目AC数和提交数信息
-    update_problem_ac="UPDATE problem SET accept=(SELECT count(*) FROM solution WHERE problem_id=%s AND result=1) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
-    update_problem_sub="UPDATE problem SET submit=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE problem_id=%s"%(result['problem_id'],result['problem_id'])
+    update_problem_ac="UPDATE problem_statistics SET accepts_count=(SELECT count(*) FROM solution WHERE problem_id=%s AND result=1) WHERE id=%s"%(result['problem_id'],result['problem_id'])
+    update_problem_sub="UPDATE problem_statistics SET solutions_count=(SELECT count(*) FROM solution WHERE problem_id=%s) WHERE id=%s"%(result['problem_id'],result['problem_id'])
 #    run_sql([sql,update_ac_sql,update_sub_sql,update_problem_ac,update_problem_sub])
     sql_yield.send([sql,update_ac_sql,update_sub_sql,update_problem_ac,update_problem_sub])
     return 0
@@ -118,14 +121,14 @@ def update_result(result):
 def update_compile_info(solution_id,info):
     '''更新数据库编译错误信息'''
     info = MySQLdb.escape_string(info)
-    sql = "insert into compile_info(solution_id,compile_info) values (%s,'%s')"%(solution_id,info)
+    sql = "insert into compile_info(code_id,content) values (%s,'%s')"%(solution_id,info)
    # run_sql(sql)
     sql_yield.send(sql)
     return 0
 
 def get_problem_limit(problem_id):
     '''获得题目的时间和内存限制'''
-    sql = "select time_limit,memory_limit from problem where problem_id = %s"%problem_id
+    sql = "select time_limit,memory_limit from problem where id = %s"%problem_id
    # data = run_sql(sql)
     data = sql_yield.send(sql)
     return data[0]
@@ -141,12 +144,12 @@ def get_code(solution_id,problem_id,pro_lang):
         "pascal":"main.pas",
         "go":"main.go",
         "lua":"main.lua",
-		"dao":"main.dao",
+        "dao":"main.dao",
         'python2':'main.py',
         'python3':'main.py',
         "haskell":"main.hs"
     }
-    select_code_sql = "select code_content from code where solution_id = %s"%solution_id
+    select_code_sql = "select content from code where solution_id = %s"%solution_id
     #feh = run_sql(select_code_sql)
     feh = sql_yield.send(select_code_sql)
     if feh is not None:
@@ -168,9 +171,15 @@ def get_code(solution_id,problem_id,pro_lang):
         else:
             logging.error(e)
             return False
+    except Exception as e:
+        logging.error(e)
+        return False
     try:
         real_path = os.path.join(config.work_dir,str(solution_id),file_name[pro_lang])
     except KeyError,e:
+        logging.error(e)
+        return False
+    except Exception as e:
         logging.error(e)
         return False
     try:
@@ -185,6 +194,9 @@ def get_code(solution_id,problem_id,pro_lang):
             return False
         f.close()
     except OSError,e:
+        logging.error(e)
+        return False
+    except Exception as e:
         logging.error(e)
         return False
     return True
@@ -204,7 +216,7 @@ def put_task_into_queue():
     '''循环扫描数据库,将任务添加到队列'''
     while True:
 #        q.join() #阻塞程序,直到队列里面的任务全部完成
-        sql = "select solution_id,problem_id,user_id,contest_id,pro_lang from solution where result = 0"
+        sql = "select id,problem_id,user_id,contest_id,program_language from solution where result = 0"
         #data = run_sql(sql)
         data = sql_yield.send(sql)
         time.sleep(0.2) #延时0.2秒,防止因速度太快不能获取代码
@@ -324,7 +336,7 @@ def judge_one_mem_time(solution_id,problem_id,data_num,time_limit,mem_limit,lang
     elif language == "perl":
         cmd = "perl %s"%(os.path.join(config.work_dir,str(solution_id),"main.pl"))
         main_exe = shlex.split(cmd)
-	elif language == "dao":
+    elif language == "dao":
         cmd = "dao %s"%(os.path.join(config.work_dir,str(solution_id),"main.dao"))
         main_exe = shlex.split(cmd)
     else:
@@ -502,8 +514,8 @@ def check_thread():
                 t.deamon = True
                 t.start()
             time.sleep(1)
-        except:
-            pass
+        except Exception as e:
+            logging.error(e)
 
 def start_protect():
     '''开启守护进程'''
